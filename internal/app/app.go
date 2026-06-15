@@ -73,6 +73,8 @@ func CollectRows(ctx context.Context, cfg model.Config) ([]model.Row, error) {
 		}
 	}
 	model.SortRows(rows)
+	rows = model.DeduplicateRows(rows)
+	model.SortRows(rows)
 	for _, r := range rows {
 		log.Info("finding", "tier", r.Tier, "severity", r.Severity, "cve", r.CVE, "repository", r.Repository, "package", r.Package, "fixed", r.FixedVersion, "exploit", r.ExploitAvailable, "runtime", r.RunningOrDeployed)
 	}

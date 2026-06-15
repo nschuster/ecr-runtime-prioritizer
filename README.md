@@ -15,7 +15,7 @@ It combines:
 - **Amazon Inspector2 ECR findings** for CVE/package/fix metadata.
 - **EKS pod inventory** from `kubectl get pods --all-namespaces -o json`.
 - **ECS running/pending task inventory** from the ECS API.
-- **Charm TUI/output** using Bubble Tea, Bubbles table/viewport/text input/file picker components, Lip Gloss, Fang, Glamour/Glow-style Markdown rendering, and Charm log messages.
+- **Charm TUI/output** using Bubble Tea, Bubbles table/viewport/text input components, Lip Gloss, Fang, Glamour/Glow-style Markdown rendering, and Charm log messages.
 
 ## Interactive TUI
 
@@ -33,11 +33,10 @@ TUI controls:
 | `Enter`/`→` | Open the selected finding detail page |
 | `Esc`/`←` | Return from details/modal |
 | `r` | Open the report-generation modal |
-| `p` | Open the directory file picker from the report modal |
 | `Space` | Toggle report file types in the report modal |
 | `q` | Quit from the main table/details views |
 
-The report modal floats in the foreground in the middle of the TUI, lets you set a filename prefix, select `csv`/`json`/`md`, and choose an output directory with the Bubbles file picker. The overview table preserves the original severity/tier/runtime color cues. Use `--tui=false` for the old plain terminal table, or choose `--format json|csv|md` for scriptable output.
+The report modal floats in the foreground in the middle of the TUI, lets you set a filename prefix, and select `csv`/`json`/`md`. Pressing the generate button writes the files and closes the modal automatically. The overview table preserves the original severity/tier/runtime color cues, and the active selection highlight spans the full row across every column. Use `--tui=false` for the old plain terminal table, or choose `--format json|csv|md` for scriptable output.
 
 ## Prioritization model
 
@@ -47,6 +46,8 @@ The report modal floats in the foreground in the middle of the TUI, lets you set
 | **Tier 2** | `fixAvailable = YES`, no known exploit available |
 
 The scanner filters to `ACTIVE` ECR image findings with `fixAvailable = YES` and `CRITICAL`/`HIGH` severity by default.
+
+Inspector can return multiple package entries for one finding, and different pages/regions can also contain records that collapse to the same practical remediation item. The tool therefore deduplicates by account, region, repository, image digest — or image tags when a digest is unavailable — CVE, package manager, package, installed version, and fixed version, while merging runtime locations and preserving the highest-priority tier/severity/CVSS fields.
 
 Sorting order:
 

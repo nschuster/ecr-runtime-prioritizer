@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/filepicker"
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -23,7 +22,6 @@ const (
 	screenTable screen = iota
 	screenDetail
 	screenReport
-	screenPicker
 )
 
 var (
@@ -54,7 +52,6 @@ type Model struct {
 	outDir      string
 	formats     map[string]bool
 	reportFocus int
-	picker      filepicker.Model
 	status      string
 	err         string
 }
@@ -95,19 +92,11 @@ func New(ctx context.Context, cfg model.Config, rows []model.Row) Model {
 	prefix.SetValue("ecr-vulnerability-priorities")
 	prefix.Focus()
 
-	picker := filepicker.New()
-	picker.CurrentDirectory = "."
-	picker.DirAllowed = true
-	picker.FileAllowed = false
-	picker.ShowSize = false
-	picker.ShowPermissions = false
-	picker.SetHeight(12)
-
 	vp := viewport.New(120, 24)
 
 	return Model{
 		ctx: ctx, cfg: cfg, rows: rows, table: t, detail: vp, state: screenTable,
-		prefix: prefix, outDir: ".", picker: picker,
+		prefix: prefix, outDir: ".",
 		formats: map[string]bool{"csv": true, "json": true, "md": true},
 	}
 }
@@ -122,10 +111,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.table.SetHeight(tableHeight)
 		m.table.SetWidth(max(80, msg.Width-4))
 		m.detail.Width = max(60, msg.Width-8)
-		m.detail.Height = max(10, msg.Height-8)
-		m.picker.SetHeight(max(8, msg.Height-12))
+		m.detail.Height = max(10, msg.Height-12)
 	case tea.KeyMsg:
-		if m.state != screenReport && m.state != screenPicker {
+		if m.state != screenReport {
 			switch msg.String() {
 			case "q", "ctrl+c":
 				return m, tea.Quit
@@ -138,8 +126,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateDetail(msg)
 		case screenReport:
 			return m.updateReport(msg)
-		case screenPicker:
-			return m.updatePicker(msg)
 		}
 	}
 	return m, nil
@@ -198,8 +184,7 @@ func (m Model) updateReport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "p":
-		m.state = screenPicker
-		return m, m.picker.Init()
+		return m, nil
 	case " ":
 		switch m.reportFocus {
 		case 1:
@@ -215,7 +200,9 @@ func (m Model) updateReport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.updateReport(tea.KeyMsg{Type: tea.KeySpace})
 		}
 		if m.reportFocus == 4 {
-			m.generateReport()
+			if m.generateReport() {
+				m.state = screenTable
+			}
 			return m, nil
 		}
 	}
@@ -227,33 +214,11 @@ func (m Model) updateReport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) updatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		m.state = screenReport
-		return m, nil
-	case "c":
-		m.outDir = m.picker.CurrentDirectory
-		m.state = screenReport
-		m.status = "selected output directory: " + m.outDir
-		return m, nil
-	}
-	var cmd tea.Cmd
-	m.picker, cmd = m.picker.Update(msg)
-	if m.picker.Path != "" {
-		m.outDir = m.picker.Path
-		m.picker.Path = ""
-		m.state = screenReport
-		m.status = "selected output directory: " + m.outDir
-	}
-	return m, cmd
-}
-
-func (m *Model) generateReport() {
+func (m *Model) generateReport() bool {
 	prefix := strings.TrimSpace(m.prefix.Value())
 	if prefix == "" {
 		m.err = "prefix is required"
-		return
+		return false
 	}
 	formats := []string{}
 	for _, f := range []string{"csv", "json", "md"} {
@@ -263,26 +228,27 @@ func (m *Model) generateReport() {
 	}
 	if len(formats) == 0 {
 		m.err = "select at least one file type"
-		return
+		return false
 	}
-	fullPrefix := filepath.Join(m.outDir, prefix)
+	fullPrefix := prefix
+	if !filepath.IsAbs(prefix) {
+		fullPrefix = filepath.Join(m.outDir, prefix)
+	}
 	if err := app.WriteReports(fullPrefix, m.rows, formats); err != nil {
 		m.err = err.Error()
-		return
+		return false
 	}
 	m.status = fmt.Sprintf("generated %s report(s) at %s.*", strings.Join(formats, ", "), fullPrefix)
+	return true
 }
 
 func (m Model) View() string {
 	switch m.state {
 	case screenDetail:
-		return m.wrap(m.detailView())
+		return m.wrapDetail(m.detailView())
 	case screenReport:
 		base := m.wrap(m.tableView())
 		return overlayCenter(base, m.reportModal(), max(m.width, 100), max(m.height, 30))
-	case screenPicker:
-		base := m.wrap(m.tableView())
-		return overlayCenter(base, m.pickerModal(), max(m.width, 100), max(m.height, 30))
 	default:
 		return m.wrap(m.tableView())
 	}
@@ -292,6 +258,10 @@ func (m Model) wrap(body string) string {
 	return lipgloss.NewStyle().Padding(1, 2).Render(body)
 }
 
+func (m Model) wrapDetail(body string) string {
+	return lipgloss.NewStyle().Padding(1, 2, 0, 2).Render(body)
+}
+
 func (m Model) tableView() string {
 	t1, t2, rt := model.Summary(m.rows)
 	status := mutedStyle.Render(fmt.Sprintf("%d findings · Tier 1: %d · Tier 2: %d · runtime matched: %d", len(m.rows), t1, t2, rt))
@@ -299,17 +269,27 @@ func (m Model) tableView() string {
 	if m.status != "" {
 		help += "\n" + successStyle.Render(m.status)
 	}
-	return titleStyle.Render("ECR Inspector Runtime Prioritizer") + "\n" + status + "\n\n" + colorizeTable(m.table.View()) + "\n" + help
+	return titleStyle.Render("ECR Inspector Runtime Prioritizer") + "\n" + status + "\n\n" + m.renderOverviewTable() + "\n" + help
 }
 
 func (m Model) detailView() string {
-	return titleStyle.Render("Finding Details") + "\n" + mutedStyle.Render("esc/← back · r report · ↑/↓ scroll · q quit") + "\n\n" + panelStyle.Render(m.detail.View())
+	header := titleStyle.Render("ECR Inspector Runtime Prioritizer") + "\n" + mutedStyle.Render("Finding Details")
+	panel := panelStyle.Width(max(60, m.detail.Width)).Height(max(8, m.detail.Height)).Render(m.detail.View())
+	footer := mutedStyle.Render("esc/← back · r report · ↑/↓ scroll · q quit")
+	content := header + "\n\n" + panel
+	if m.height > 0 {
+		used := lipgloss.Height(m.wrap(content)) + 1
+		if gap := m.height - used - 1; gap > 0 {
+			content += strings.Repeat("\n", gap)
+		}
+	}
+	return content + "\n" + footer
 }
 
 func (m Model) reportModal() string {
 	lines := []string{"Generate report", ""}
 	lines = append(lines, focusLine(m.reportFocus == 0, "Prefix", m.prefix.View()))
-	lines = append(lines, focusLine(false, "Directory", m.outDir+"  "+mutedStyle.Render("(press p for file picker)")))
+	lines = append(lines, focusLine(false, "Directory", m.outDir))
 	lines = append(lines, checkbox(m.reportFocus == 1, m.formats["csv"], "CSV"))
 	lines = append(lines, checkbox(m.reportFocus == 2, m.formats["json"], "JSON"))
 	lines = append(lines, checkbox(m.reportFocus == 3, m.formats["md"], "Markdown"))
@@ -324,13 +304,89 @@ func (m Model) reportModal() string {
 	if m.status != "" {
 		lines = append(lines, "", successStyle.Render(m.status))
 	}
-	lines = append(lines, "", mutedStyle.Render("tab focus · space toggle · enter activate · p picker · esc close"))
+	lines = append(lines, "", mutedStyle.Render("tab focus · space toggle · enter activate · esc close"))
 	return modalStyle.Width(72).Render(strings.Join(lines, "\n"))
 }
 
-func (m Model) pickerModal() string {
-	content := fmt.Sprintf("Select output directory\n%s\n\n%s\n%s", mutedStyle.Render("enter/right opens directory · c selects current directory · esc back"), m.picker.View(), mutedStyle.Render("current: "+m.picker.CurrentDirectory))
-	return modalStyle.Width(max(72, m.width-8)).Render(content)
+func (m Model) renderOverviewTable() string {
+	cols := m.table.Columns()
+	cursor := m.table.Cursor()
+	height := max(1, m.height-10)
+	if m.height == 0 {
+		height = 18
+	}
+	start := 0
+	if cursor >= height {
+		start = cursor - height + 1
+	}
+	end := min(len(m.rows), start+height)
+	var b strings.Builder
+	b.WriteString(renderCells(cols, []string{"#", "Tier", "Run", "Severity", "CVSS", "CVE", "Repository", "Image", "Package", "Fixed"}, true, false))
+	b.WriteString("\n")
+	for i := start; i < end; i++ {
+		r := m.rows[i]
+		cells := []string{
+			strconv.Itoa(i + 1), r.Tier, yesNo(r.RunningOrDeployed), r.Severity,
+			fmt.Sprintf("%.1f", r.CVSS), r.CVE, r.Repository, strings.Join(r.ImageTags, ","), r.Package, r.FixedVersion,
+		}
+		b.WriteString(renderCells(cols, cells, false, i == cursor))
+		if i < end-1 {
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
+}
+
+func renderCells(cols []table.Column, cells []string, header, selected bool) string {
+	parts := make([]string, 0, len(cols))
+	for i, col := range cols {
+		value := ""
+		if i < len(cells) {
+			value = cells[i]
+		}
+		cell := padCell(value, col.Width)
+		if header {
+			cell = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#E6EDF3")).Background(lipgloss.Color("#24324A")).Render(cell)
+		} else if !selected {
+			cell = colorizeCell(value, cell)
+		}
+		parts = append(parts, cell)
+	}
+	line := strings.Join(parts, " ")
+	if selected {
+		line = lipgloss.NewStyle().Foreground(lipgloss.Color("#06111F")).Background(accent).Bold(true).Render(line)
+	}
+	return line
+}
+
+func padCell(value string, width int) string {
+	if width <= 0 {
+		return value
+	}
+	runes := []rune(value)
+	if len(runes) > width {
+		if width <= 1 {
+			return string(runes[:width])
+		}
+		return string(runes[:width-1]) + "…"
+	}
+	return value + strings.Repeat(" ", width-len(runes))
+}
+
+func colorizeCell(raw, padded string) string {
+	switch raw {
+	case "Tier 1":
+		return lipgloss.NewStyle().Foreground(danger).Bold(true).Render(padded)
+	case "Tier 2":
+		return lipgloss.NewStyle().Foreground(warn).Bold(true).Render(padded)
+	case "CRITICAL":
+		return lipgloss.NewStyle().Foreground(danger).Bold(true).Render(padded)
+	case "HIGH":
+		return lipgloss.NewStyle().Foreground(warn).Bold(true).Render(padded)
+	case "YES":
+		return lipgloss.NewStyle().Foreground(ok).Bold(true).Render(padded)
+	}
+	return padded
 }
 
 func (m Model) selectedDetail() string {

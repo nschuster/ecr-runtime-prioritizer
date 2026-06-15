@@ -17,18 +17,12 @@ Escape
 Sleep 1s
 Type "r"
 Sleep 2s
-Type "p"
-Sleep 2s
-Type "c"
-Sleep 1s
 Tab
 Tab
 Tab
 Tab
 Enter
 Sleep 3s
-Escape
-Sleep 1s
 Type "q"
 Sleep 1s
 
