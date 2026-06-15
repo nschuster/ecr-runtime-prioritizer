@@ -61,9 +61,8 @@ func TestDetailAndReportModalViews(t *testing.T) {
 	if !strings.Contains(view, "ECR Inspector Runtime Prioritizer") || !strings.Contains(view, "Finding Details") || !strings.Contains(view, "Runtime locations") {
 		t.Fatalf("detail view missing expected content\n%s", view)
 	}
-	lines := strings.Split(view, "\n")
-	if !strings.Contains(stripANSI(lines[len(lines)-1]), "esc/← back") {
-		t.Fatalf("expected detail controls in bottom footer, got last line %q\n%s", lines[len(lines)-1], view)
+	if !strings.Contains(stripANSI(view), "esc/← back") {
+		t.Fatalf("expected detail controls in view\n%s", view)
 	}
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m = updated.(Model)
@@ -76,7 +75,7 @@ func TestDetailAndReportModalViews(t *testing.T) {
 	if strings.Contains(view, "file picker") || strings.Contains(view, "press p") {
 		t.Fatalf("report modal should not expose file picker controls\n%s", view)
 	}
-	lines = strings.Split(view, "\n")
+	lines := strings.Split(view, "\n")
 	modalLine := -1
 	for i, line := range lines {
 		if strings.Contains(line, "Generate report") {
@@ -91,18 +90,56 @@ func TestDetailAndReportModalViews(t *testing.T) {
 
 func TestReportGenerationClosesModal(t *testing.T) {
 	m := New(context.Background(), model.Config{Demo: true}, app.DemoRows())
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	m = updated.(Model)
 	m.reportFocus = 4
 	m.prefix.SetValue(t.TempDir() + "/report")
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("expected report close to request a screen clear")
+	}
+	if msg := cmd(); msg != tea.ClearScreen() {
+		t.Fatalf("expected report close to emit ClearScreen, got %#v", msg)
+	}
 	if m.state != screenTable {
 		t.Fatalf("expected report modal to close after generation, got state %v", m.state)
 	}
 	if strings.Contains(m.View(), "Generate report") {
 		t.Fatalf("report modal still visible after generation\n%s", m.View())
+	}
+	view := m.View()
+	lines := strings.Split(view, "\n")
+	if len(lines) != m.height {
+		t.Fatalf("post-report view should fill terminal height to clear modal remnants, got %d lines want %d\n%s", len(lines), m.height, view)
+	}
+	for i, line := range lines {
+		if width := lipgloss.Width(line); width != m.width {
+			t.Fatalf("post-report line %d should be fitted to terminal width to clear stale modal cells, got width %d want %d: %q", i, width, m.width, line)
+		}
+	}
+}
+
+func TestReportEscapeClosesModalAndClearsScreen(t *testing.T) {
+	m := New(context.Background(), model.Config{Demo: true}, app.DemoRows())
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = updated.(Model)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	if m.state != screenTable {
+		t.Fatalf("expected escape to close report modal, got state %v", m.state)
+	}
+	if cmd == nil {
+		t.Fatalf("expected escape close to request a screen clear")
+	}
+	if msg := cmd(); msg != tea.ClearScreen() {
+		t.Fatalf("expected escape close to emit ClearScreen, got %#v", msg)
 	}
 }
 

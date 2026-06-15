@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -178,7 +179,7 @@ func (m Model) updateReport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.state = screenTable
-		return m, nil
+		return m, clearScreenCmd
 	case "ctrl+c":
 		return m, tea.Quit
 	case "tab", "shift+tab", "up", "down":
@@ -210,6 +211,7 @@ func (m Model) updateReport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.reportFocus == 4 {
 			if m.generateReport() {
 				m.state = screenTable
+				return m, clearScreenCmd
 			}
 			return m, nil
 		}
@@ -221,6 +223,8 @@ func (m Model) updateReport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	return m, nil
 }
+
+func clearScreenCmd() tea.Msg { return tea.ClearScreen() }
 
 func (m *Model) generateReport() bool {
 	prefix := strings.TrimSpace(m.prefix.Value())
@@ -248,15 +252,76 @@ func (m *Model) generateReport() bool {
 }
 
 func (m Model) View() string {
+	var view string
 	switch m.state {
 	case screenDetail:
-		return m.wrapDetail(m.detailView())
+		view = m.wrapDetail(m.detailView())
 	case screenReport:
 		base := m.wrap(m.tableView())
-		return overlayCenter(base, m.reportModal(), max(m.width, 100), max(m.height, 30))
+		view = overlayCenter(base, m.reportModal(), max(m.width, 100), max(m.height, 30))
 	default:
-		return m.wrap(m.tableView())
+		view = m.wrap(m.tableView())
 	}
+	return m.fullFrame(view)
+}
+
+func (m Model) fullFrame(view string) string {
+	if m.width <= 0 || m.height <= 0 {
+		return view
+	}
+	lines := strings.Split(view, "\n")
+	if len(lines) > m.height {
+		lines = lines[:m.height]
+	}
+	for i, line := range lines {
+		lines[i] = fitLine(line, m.width)
+	}
+	for len(lines) < m.height {
+		lines = append(lines, strings.Repeat(" ", m.width))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func fitLine(line string, width int) string {
+	if width <= 0 {
+		return line
+	}
+	var b strings.Builder
+	visible := 0
+	truncated := false
+	for i := 0; i < len(line); {
+		if line[i] == '\x1b' {
+			end := i + 1
+			for end < len(line) && line[end] != 'm' {
+				end++
+			}
+			if end < len(line) {
+				end++
+			}
+			b.WriteString(line[i:end])
+			i = end
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(line[i:])
+		if r == utf8.RuneError && size == 0 {
+			break
+		}
+		runeWidth := lipgloss.Width(string(r))
+		if visible+runeWidth > width {
+			truncated = true
+			break
+		}
+		b.WriteRune(r)
+		visible += runeWidth
+		i += size
+	}
+	if truncated {
+		b.WriteString("\x1b[0m")
+	}
+	if visible < width {
+		b.WriteString(strings.Repeat(" ", width-visible))
+	}
+	return b.String()
 }
 
 func (m Model) wrap(body string) string {
