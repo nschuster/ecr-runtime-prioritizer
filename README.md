@@ -36,7 +36,7 @@ TUI controls:
 | `Space` | Toggle report file types in the report modal |
 | `q` | Quit from the main table/details views |
 
-The report modal floats in the foreground in the middle of the TUI, lets you set a filename prefix, and select `csv`/`json`/`md`. Pressing the generate button writes the files and closes the modal automatically. The overview table preserves the original severity/tier/runtime color cues, and the active selection highlight spans the full row across every column. Use `--tui=false` for the old plain terminal table, or choose `--format json|csv|md` for scriptable output.
+The report modal floats in the foreground in the middle of the TUI, lets you set a filename prefix, and select `csv`/`json`/`md`. Pressing the generate button writes the files and closes the modal automatically. The overview table preserves the original severity/tier/runtime color cues, the active selection highlight spans the full row across every column, and overflowing cells in the selected row marquee-scroll right-to-left so long image tags/packages/fix versions can be read without opening details. The detail page uses the same semantic colors for tier, severity, exploit/fix state, CVE, runtime matches, and status. Use `--tui=false` for the old plain terminal table, or choose `--format json|csv|md` for scriptable output.
 
 ## Prioritization model
 

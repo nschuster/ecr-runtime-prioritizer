@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
@@ -102,6 +103,34 @@ func TestReportGenerationClosesModal(t *testing.T) {
 	}
 	if strings.Contains(m.View(), "Generate report") {
 		t.Fatalf("report modal still visible after generation\n%s", m.View())
+	}
+}
+
+func TestSelectedRowMarqueeScrollsOverflowingCells(t *testing.T) {
+	cols := []table.Column{{Title: "Image", Width: 8}}
+	frame0 := stripANSI(renderCells(cols, []string{"very-long-image-tag"}, false, true, 0))
+	frame4 := stripANSI(renderCells(cols, []string{"very-long-image-tag"}, false, true, 4))
+	if frame0 == frame4 {
+		t.Fatalf("expected selected overflowing cell to scroll, got same frame %q", frame0)
+	}
+	if strings.Contains(frame0, "…") || strings.Contains(frame4, "…") {
+		t.Fatalf("selected marquee should scroll text instead of ellipsizing: %q / %q", frame0, frame4)
+	}
+	if len([]rune(strings.TrimRight(frame0, " "))) > 8 || len([]rune(strings.TrimRight(frame4, " "))) > 8 {
+		t.Fatalf("marquee frames must stay within column width: %q / %q", frame0, frame4)
+	}
+}
+
+func TestDetailViewUsesSemanticColorFormatting(t *testing.T) {
+	m := New(context.Background(), model.Config{Demo: true}, app.DemoRows())
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	view := m.View()
+	if !strings.Contains(stripANSI(view), "Tier:") || !strings.Contains(stripANSI(view), "Runtime locations") {
+		t.Fatalf("detail view missing expected text\n%s", view)
+	}
+	if !strings.Contains(view, "38;2") && !strings.Contains(view, "38;5") {
+		t.Fatalf("detail view should include ANSI color formatting\n%s", view)
 	}
 }
 

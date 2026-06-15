@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -17,6 +18,8 @@ import (
 )
 
 type screen int
+
+type marqueeTickMsg time.Time
 
 const (
 	screenTable screen = iota
@@ -47,6 +50,7 @@ type Model struct {
 	state  screen
 	width  int
 	height int
+	frame  int
 
 	prefix      textinput.Model
 	outDir      string
@@ -101,7 +105,11 @@ func New(ctx context.Context, cfg model.Config, rows []model.Row) Model {
 	}
 }
 
-func (m Model) Init() tea.Cmd { return nil }
+func (m Model) Init() tea.Cmd { return marqueeTick() }
+
+func marqueeTick() tea.Cmd {
+	return tea.Tick(350*time.Millisecond, func(t time.Time) tea.Msg { return marqueeTickMsg(t) })
+}
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -112,6 +120,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.table.SetWidth(max(80, msg.Width-4))
 		m.detail.Width = max(60, msg.Width-8)
 		m.detail.Height = max(10, msg.Height-12)
+	case marqueeTickMsg:
+		if m.state == screenTable {
+			m.frame++
+			return m, marqueeTick()
+		}
+		return m, marqueeTick()
 	case tea.KeyMsg:
 		if m.state != screenReport {
 			switch msg.String() {
@@ -321,7 +335,7 @@ func (m Model) renderOverviewTable() string {
 	}
 	end := min(len(m.rows), start+height)
 	var b strings.Builder
-	b.WriteString(renderCells(cols, []string{"#", "Tier", "Run", "Severity", "CVSS", "CVE", "Repository", "Image", "Package", "Fixed"}, true, false))
+	b.WriteString(renderCells(cols, []string{"#", "Tier", "Run", "Severity", "CVSS", "CVE", "Repository", "Image", "Package", "Fixed"}, true, false, 0))
 	b.WriteString("\n")
 	for i := start; i < end; i++ {
 		r := m.rows[i]
@@ -329,7 +343,7 @@ func (m Model) renderOverviewTable() string {
 			strconv.Itoa(i + 1), r.Tier, yesNo(r.RunningOrDeployed), r.Severity,
 			fmt.Sprintf("%.1f", r.CVSS), r.CVE, r.Repository, strings.Join(r.ImageTags, ","), r.Package, r.FixedVersion,
 		}
-		b.WriteString(renderCells(cols, cells, false, i == cursor))
+		b.WriteString(renderCells(cols, cells, false, i == cursor, m.frame))
 		if i < end-1 {
 			b.WriteString("\n")
 		}
@@ -337,7 +351,7 @@ func (m Model) renderOverviewTable() string {
 	return b.String()
 }
 
-func renderCells(cols []table.Column, cells []string, header, selected bool) string {
+func renderCells(cols []table.Column, cells []string, header, selected bool, frame int) string {
 	parts := make([]string, 0, len(cols))
 	for i, col := range cols {
 		value := ""
@@ -345,6 +359,9 @@ func renderCells(cols []table.Column, cells []string, header, selected bool) str
 			value = cells[i]
 		}
 		cell := padCell(value, col.Width)
+		if selected && !header {
+			cell = marqueeCell(value, col.Width, frame)
+		}
 		if header {
 			cell = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#E6EDF3")).Render(cell)
 		} else if !selected {
@@ -357,6 +374,27 @@ func renderCells(cols []table.Column, cells []string, header, selected bool) str
 		line = lipgloss.NewStyle().Foreground(lipgloss.Color("#06111F")).Background(accent).Bold(true).Render(line)
 	}
 	return line
+}
+
+func marqueeCell(value string, width, frame int) string {
+	if width <= 0 {
+		return value
+	}
+	runes := []rune(value)
+	if len(runes) <= width {
+		return value + strings.Repeat(" ", width-len(runes))
+	}
+	// Scroll right-to-left while selected, then leave a short blank gap before looping.
+	gap := []rune("   ")
+	track := append(append([]rune{}, runes...), gap...)
+	cycle := len(track)
+	start := frame % cycle
+	window := make([]rune, 0, width)
+	for len(window) < width {
+		window = append(window, track[start%cycle])
+		start++
+	}
+	return string(window)
 }
 
 func padCell(value string, width int) string {
@@ -402,7 +440,7 @@ func (m Model) selectedDetail() string {
 	}
 	r := m.rows[idx]
 	var b strings.Builder
-	write := func(k string, v any) { b.WriteString(fmt.Sprintf("%-18s %v\n", k+":", v)) }
+	write := func(k string, v any) { b.WriteString(detailLine(k, fmt.Sprint(v)) + "\n") }
 	write("Tier", r.Tier)
 	write("Severity", r.Severity)
 	write("CVSS", fmt.Sprintf("%.1f", r.CVSS))
@@ -424,15 +462,68 @@ func (m Model) selectedDetail() string {
 	write("Updated", r.UpdatedAt)
 	write("Status", r.InspectorStatus)
 	write("Finding ARN", r.FindingARN)
-	b.WriteString("\nRuntime locations:\n")
+	b.WriteString("\n" + lipgloss.NewStyle().Foreground(accent).Bold(true).Render("Runtime locations:") + "\n")
 	if len(r.RuntimeLocations) == 0 {
-		b.WriteString("  none matched in EKS/ECS runtime inventory\n")
+		b.WriteString("  " + mutedStyle.Render("none matched in EKS/ECS runtime inventory") + "\n")
 	} else {
 		for _, h := range r.RuntimeLocations {
-			b.WriteString("  - " + h.Compact() + "\n")
+			b.WriteString("  " + successStyle.Render("•") + " " + detailRuntime(h) + "\n")
 		}
 	}
 	return b.String()
+}
+
+func detailLine(label, value string) string {
+	labelPart := lipgloss.NewStyle().Foreground(muted).Bold(true).Render(fmt.Sprintf("%-18s", label+":"))
+	return labelPart + " " + detailValue(label, value)
+}
+
+func detailValue(label, value string) string {
+	s := lipgloss.NewStyle()
+	switch label {
+	case "Tier":
+		if value == "Tier 1" {
+			s = s.Foreground(danger).Bold(true)
+		} else {
+			s = s.Foreground(warn).Bold(true)
+		}
+	case "Severity":
+		if value == "CRITICAL" {
+			s = s.Foreground(danger).Bold(true)
+		} else if value == "HIGH" {
+			s = s.Foreground(warn).Bold(true)
+		}
+	case "Exploit available":
+		if value == "YES" {
+			s = s.Foreground(danger).Bold(true)
+		} else {
+			s = s.Foreground(muted)
+		}
+	case "Fix available", "Fixed":
+		if value != "" && value != "NO" {
+			s = s.Foreground(ok).Bold(true)
+		}
+	case "CVE":
+		s = s.Foreground(accent).Bold(true)
+	case "Repository", "Image tags", "Image digest", "Image URI", "Package", "Installed":
+		s = s.Foreground(lipgloss.Color("#E6EDF3"))
+	case "Status":
+		if value == "ACTIVE" {
+			s = s.Foreground(ok).Bold(true)
+		}
+	}
+	return s.Render(value)
+}
+
+func detailRuntime(h model.RuntimeHit) string {
+	platform := lipgloss.NewStyle().Foreground(ok).Bold(true).Render(h.Platform)
+	where := lipgloss.NewStyle().Foreground(accent).Render(h.Region + ":" + h.Cluster)
+	workload := lipgloss.NewStyle().Foreground(warn).Render(h.Namespace + "/" + h.Workload)
+	container := lipgloss.NewStyle().Foreground(lipgloss.Color("#E6EDF3")).Render("pod=" + h.Pod + " container=" + h.Container)
+	if h.Platform != "EKS" {
+		return platform + ":" + where + ":" + lipgloss.NewStyle().Foreground(warn).Render(h.Workload) + " " + mutedStyle.Render("status="+h.Status)
+	}
+	return platform + ":" + where + ":" + workload + " " + container
 }
 
 func colorizeTable(view string) string {
