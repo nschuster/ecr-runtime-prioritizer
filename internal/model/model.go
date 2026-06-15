@@ -12,6 +12,7 @@ type Config struct {
 	EKS                  bool
 	ECS                  bool
 	KubeContexts         []string
+	Kubeconfig           string
 	NoKubeconfig         bool
 	KubeTunnelCommand    string
 	KubeTunnelWait       int

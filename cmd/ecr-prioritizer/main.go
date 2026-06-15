@@ -26,7 +26,7 @@ func main() {
 
 func newRootCommand() *cobra.Command {
 	var regions, contexts string
-	cfg := model.Config{Format: "table", Limit: 20, TUI: true, PromptForJumpHosts: true}
+	cfg := model.Config{Format: "table", Limit: 20, TUI: true, PromptForJumpHosts: true, Kubeconfig: app.DefaultKubeconfigPath()}
 	cmd := &cobra.Command{
 		Use:   "ecr-prioritizer",
 		Short: "Prioritize Amazon Inspector ECR CVEs by exploitability, fixability, and runtime usage",
@@ -50,6 +50,9 @@ Use --demo for a safe local preview without AWS credentials.`,
 				cfg.Regions = awsdata.RegionsDefault()
 			}
 			cfg.KubeContexts = app.SplitCSV(contexts)
+			if cfg.Kubeconfig == "" {
+				cfg.Kubeconfig = app.DefaultKubeconfigPath()
+			}
 			fileCfg, err := app.LoadFileConfig(cfg.KubeTunnelConfig)
 			if err != nil {
 				return err
@@ -79,6 +82,7 @@ Use --demo for a safe local preview without AWS credentials.`,
 	cmd.Flags().BoolVar(&cfg.EKS, "eks", false, "check EKS deployed/running pod images")
 	cmd.Flags().BoolVar(&cfg.ECS, "ecs", false, "check ECS running/pending task images")
 	cmd.Flags().StringVar(&contexts, "kube-contexts", "", "comma-separated kube contexts to inspect instead of discovering EKS clusters")
+	cmd.Flags().StringVar(&cfg.Kubeconfig, "kubeconfig", app.DefaultKubeconfigPath(), "kubeconfig file used for aws eks update-kubeconfig and kubectl; defaults to app-specific config, not ~/.kube/config")
 	cmd.Flags().BoolVar(&cfg.NoKubeconfig, "no-update-kubeconfig", false, "do not call aws eks update-kubeconfig for discovered clusters")
 	cmd.Flags().StringVar(&cfg.KubeTunnelCommand, "kube-tunnel-command", "", "optional global shell command that opens a Kubernetes API tunnel before EKS runtime collection; killed when the scan exits")
 	cmd.Flags().IntVar(&cfg.KubeTunnelWait, "kube-tunnel-wait", 3, "seconds to wait after starting tunnel commands before collecting Kubernetes runtime inventory")

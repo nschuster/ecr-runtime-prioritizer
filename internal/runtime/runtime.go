@@ -19,6 +19,7 @@ type Index map[string][]model.RuntimeHit
 
 type KubeAccess struct {
 	Context       string
+	Kubeconfig    string
 	Region        string
 	Cluster       string
 	Server        string
@@ -78,19 +79,6 @@ func Match(idx Index, keys []string) []model.RuntimeHit {
 	return hits
 }
 
-func CollectEKS(ctx context.Context, regions, contexts []string, updateKubeconfig bool) ([]ImageRef, error) {
-	access := make([]KubeAccess, 0, len(contexts))
-	for _, kc := range contexts {
-		region := inferRegion(kc)
-		cluster := kc
-		if strings.Contains(kc, "/") {
-			cluster = kc[strings.LastIndex(kc, "/")+1:]
-		}
-		access = append(access, KubeAccess{Context: kc, Region: region, Cluster: cluster})
-	}
-	return CollectEKSWithAccess(ctx, access)
-}
-
 func CollectEKSWithAccess(ctx context.Context, clusters []KubeAccess) ([]ImageRef, error) {
 	var refs []ImageRef
 	if len(clusters) == 0 {
@@ -102,13 +90,10 @@ func CollectEKSWithAccess(ctx context.Context, clusters []KubeAccess) ([]ImageRe
 			continue
 		}
 		if access.Region == "" {
-			access.Region = inferRegion(access.Context)
+			access.Region, _ = ParseKubeContext(access.Context)
 		}
 		if access.Cluster == "" {
-			access.Cluster = access.Context
-			if strings.Contains(access.Context, "/") {
-				access.Cluster = access.Context[strings.LastIndex(access.Context, "/")+1:]
-			}
+			_, access.Cluster = ParseKubeContext(access.Context)
 		}
 		log.Info("collecting EKS images", "context", access.Context, "cluster", access.Cluster)
 		got, err := collectKubectl(ctx, access)
@@ -142,7 +127,11 @@ func collectKubectl(ctx context.Context, access KubeAccess) ([]ImageRef, error) 
 }
 
 func kubectlJSON(ctx context.Context, access KubeAccess, args ...string) ([]byte, error) {
-	base := []string{"--context", access.Context}
+	base := []string{}
+	if access.Kubeconfig != "" {
+		base = append(base, "--kubeconfig", access.Kubeconfig)
+	}
+	base = append(base, "--context", access.Context)
 	if access.Server != "" {
 		base = append(base, "--server", access.Server)
 	}
@@ -284,13 +273,24 @@ func workload(p pod) string {
 	}
 	return "unknown"
 }
+func ParseKubeContext(s string) (region, cluster string) {
+	cluster = s
+	if strings.Contains(s, "/") {
+		cluster = s[strings.LastIndex(s, "/")+1:]
+	}
+	region = inferRegion(s)
+	return region, cluster
+}
+
 func inferRegion(s string) string {
-	re := regexp.MustCompile(`[a-z]{2}-[a-z]+-\d`)
-	if m := re.FindString(s); m != "" {
-		return m
+	re := regexp.MustCompile(`(?:^|[^a-z0-9-])([a-z]{2}(?:-[a-z]+)+-\d)(?:$|[^a-z0-9-])`)
+	parts := re.FindStringSubmatch(s)
+	if len(parts) > 1 {
+		return parts[1]
 	}
 	return "unknown"
 }
+
 func first(a, b string) string {
 	if a != "" {
 		return a

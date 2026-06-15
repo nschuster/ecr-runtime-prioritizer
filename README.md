@@ -119,22 +119,40 @@ Use `--profile` only when you want to force a named shared config profile:
 By default, EKS mode discovers clusters with the EKS API and runs:
 
 ```bash
-aws eks update-kubeconfig --region <region> --name <cluster> --alias <region>/<cluster>
-kubectl --context <region>/<cluster> get pods --all-namespaces -o json
-kubectl --context <region>/<cluster> get jobs --all-namespaces -o json
-kubectl --context <region>/<cluster> get cronjobs --all-namespaces -o json
+aws eks update-kubeconfig --region <region> --name <cluster> --alias <region>/<cluster> --kubeconfig <app-kubeconfig>
+kubectl --kubeconfig <app-kubeconfig> --context <region>/<cluster> get pods --all-namespaces -o json
+kubectl --kubeconfig <app-kubeconfig> --context <region>/<cluster> get jobs --all-namespaces -o json
+kubectl --kubeconfig <app-kubeconfig> --context <region>/<cluster> get cronjobs --all-namespaces -o json
 ```
 
 Pods catch currently running containers. Jobs and CronJobs catch CI/build workloads such as GitLab runners even if the runner pod has already completed or is only represented by a Job template.
 
-When `--profile` is omitted, both the AWS SDK calls and `aws eks update-kubeconfig` use your local default credential chain. When `--profile prod` is supplied, the generated `aws eks update-kubeconfig` call also receives `--profile prod`.
+The tool intentionally does **not** write discovered EKS contexts into your normal `~/.kube/config` by default. It uses an app-specific kubeconfig file for both `aws eks update-kubeconfig` and `kubectl`:
 
-### Use existing kube contexts
+```text
+~/.config/ecr-prioritizer/kubeconfig
+```
+
+Override it when needed:
 
 ```bash
 ./bin/ecr-prioritizer \
   --regions eu-central-1 \
   --eks \
+  --kubeconfig ./ecr-prioritizer.kubeconfig
+```
+
+When `--profile` is omitted, both the AWS SDK calls and `aws eks update-kubeconfig` use your local default credential chain. When `--profile prod` is supplied, the generated `aws eks update-kubeconfig` call also receives `--profile prod`.
+
+### Use existing kube contexts
+
+By default, existing contexts are read from the app-specific kubeconfig file shown above. To use contexts from your normal local kubeconfig intentionally, pass it explicitly:
+
+```bash
+./bin/ecr-prioritizer \
+  --regions eu-central-1 \
+  --eks \
+  --kubeconfig ~/.kube/config \
   --kube-contexts prod-eks,staging-eks
 ```
 

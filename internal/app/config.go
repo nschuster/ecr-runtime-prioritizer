@@ -24,6 +24,16 @@ func DefaultConfigPath() string {
 	return "ecr-prioritizer.json"
 }
 
+func DefaultKubeconfigPath() string {
+	if dir, err := os.UserConfigDir(); err == nil && dir != "" {
+		return filepath.Join(dir, "ecr-prioritizer", "kubeconfig")
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, ".config", "ecr-prioritizer", "kubeconfig")
+	}
+	return filepath.Join(".ecr-prioritizer", "kubeconfig")
+}
+
 func LoadFileConfig(path string) (FileConfig, error) {
 	var cfg FileConfig
 	if path == "" {
@@ -40,21 +50,4 @@ func LoadFileConfig(path string) (FileConfig, error) {
 		return cfg, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	return cfg, nil
-}
-
-func SaveFileConfig(path string, cfg FileConfig) error {
-	if path == "" {
-		path = DefaultConfigPath()
-	}
-	if cfg.Clusters == nil {
-		cfg.Clusters = map[string]model.ClusterTunnel{}
-	}
-	b, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, append(b, '\n'), 0o600)
 }

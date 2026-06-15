@@ -72,7 +72,6 @@ func CollectRows(ctx context.Context, cfg model.Config) ([]model.Row, error) {
 			rows = append(rows, got...)
 		}
 	}
-	model.SortRows(rows)
 	rows = model.DeduplicateRows(rows)
 	model.SortRows(rows)
 	for _, r := range rows {

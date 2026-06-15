@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -42,8 +41,6 @@ var (
 )
 
 type Model struct {
-	ctx    context.Context
-	cfg    model.Config
 	rows   []model.Row
 	table  table.Model
 	detail viewport.Model
@@ -53,7 +50,6 @@ type Model struct {
 	frame  int
 
 	prefix      textinput.Model
-	outDir      string
 	formats     map[string]bool
 	reportFocus int
 	status      string
@@ -66,7 +62,7 @@ func Run(ctx context.Context, cfg model.Config, rows []model.Row) error {
 	return err
 }
 
-func New(ctx context.Context, cfg model.Config, rows []model.Row) Model {
+func New(_ context.Context, _ model.Config, rows []model.Row) Model {
 	cols := []table.Column{
 		{Title: "#", Width: 4},
 		{Title: "Tier", Width: 8},
@@ -99,8 +95,8 @@ func New(ctx context.Context, cfg model.Config, rows []model.Row) Model {
 	vp := viewport.New(120, 24)
 
 	return Model{
-		ctx: ctx, cfg: cfg, rows: rows, table: t, detail: vp, state: screenTable,
-		prefix: prefix, outDir: ".",
+		rows: rows, table: t, detail: vp, state: screenTable,
+		prefix:  prefix,
 		formats: map[string]bool{"csv": true, "json": true, "md": true},
 	}
 }
@@ -197,8 +193,6 @@ func (m Model) updateReport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.prefix.Blur()
 		}
 		return m, nil
-	case "p":
-		return m, nil
 	case " ":
 		switch m.reportFocus {
 		case 1:
@@ -245,9 +239,6 @@ func (m *Model) generateReport() bool {
 		return false
 	}
 	fullPrefix := prefix
-	if !filepath.IsAbs(prefix) {
-		fullPrefix = filepath.Join(m.outDir, prefix)
-	}
 	if err := app.WriteReports(fullPrefix, m.rows, formats); err != nil {
 		m.err = err.Error()
 		return false
@@ -303,7 +294,6 @@ func (m Model) detailView() string {
 func (m Model) reportModal() string {
 	lines := []string{"Generate report", ""}
 	lines = append(lines, focusLine(m.reportFocus == 0, "Prefix", m.prefix.View()))
-	lines = append(lines, focusLine(false, "Directory", m.outDir))
 	lines = append(lines, checkbox(m.reportFocus == 1, m.formats["csv"], "CSV"))
 	lines = append(lines, checkbox(m.reportFocus == 2, m.formats["json"], "JSON"))
 	lines = append(lines, checkbox(m.reportFocus == 3, m.formats["md"], "Markdown"))
@@ -524,22 +514,6 @@ func detailRuntime(h model.RuntimeHit) string {
 		return platform + ":" + where + ":" + lipgloss.NewStyle().Foreground(warn).Render(h.Workload) + " " + mutedStyle.Render("status="+h.Status)
 	}
 	return platform + ":" + where + ":" + workload + " " + container
-}
-
-func colorizeTable(view string) string {
-	lines := strings.Split(view, "\n")
-	for i, line := range lines {
-		if i == 0 || strings.TrimSpace(line) == "" {
-			continue
-		}
-		line = strings.ReplaceAll(line, "Tier 1", lipgloss.NewStyle().Foreground(danger).Bold(true).Render("Tier 1"))
-		line = strings.ReplaceAll(line, "Tier 2", lipgloss.NewStyle().Foreground(warn).Bold(true).Render("Tier 2"))
-		line = strings.ReplaceAll(line, "CRITICAL", lipgloss.NewStyle().Foreground(danger).Bold(true).Render("CRITICAL"))
-		line = strings.ReplaceAll(line, "HIGH", lipgloss.NewStyle().Foreground(warn).Bold(true).Render("HIGH"))
-		line = strings.ReplaceAll(line, " YES ", " "+lipgloss.NewStyle().Foreground(ok).Bold(true).Render("YES")+" ")
-		lines[i] = line
-	}
-	return strings.Join(lines, "\n")
 }
 
 func overlayCenter(base, modal string, width, height int) string {

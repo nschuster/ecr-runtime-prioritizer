@@ -78,7 +78,7 @@ func (s *Scanner) EKSClusterInfo(ctx context.Context, region, name string) (EKSC
 }
 
 func (s *Scanner) prepareClusterAccess(ctx context.Context, cfg model.Config, region, cluster, contextName, endpointHost string, ordinal int) (func(), runidx.KubeAccess) {
-	access := runidx.KubeAccess{Context: contextName, Region: region, Cluster: cluster}
+	access := runidx.KubeAccess{Context: contextName, Kubeconfig: cfg.Kubeconfig, Region: region, Cluster: cluster}
 	if cfg.ClusterTunnels == nil {
 		cfg.ClusterTunnels = map[string]model.ClusterTunnel{}
 	}
@@ -153,11 +153,7 @@ func (s *Scanner) CollectEKS(ctx context.Context, cfg model.Config) []runidx.Ima
 			}
 		}()
 		for i, kc := range cfg.KubeContexts {
-			region := inferRegionFromContext(kc)
-			cluster := kc
-			if strings.Contains(kc, "/") {
-				cluster = kc[strings.LastIndex(kc, "/")+1:]
-			}
+			region, cluster := runidx.ParseKubeContext(kc)
 			tunnel, _ := lookupTunnel(cfg.ClusterTunnels, kc, region+"/"+cluster, cluster)
 			stop, acc := s.prepareClusterAccess(ctx, cfg, region, cluster, kc, tunnel.RemoteHost, i)
 			if stop != nil {
@@ -181,10 +177,13 @@ func (s *Scanner) CollectEKS(ctx context.Context, cfg model.Config) []runidx.Ima
 				log.Warn("cannot describe EKS cluster", "region", region, "cluster", cluster, "err", err)
 			}
 			if !cfg.NoKubeconfig {
-				log.Info("updating kubeconfig", "region", region, "cluster", cluster)
-				args := []string{"eks", "update-kubeconfig", "--region", region, "--name", cluster, "--alias", contextName}
-				if s.profile != "" {
-					args = append(args, "--profile", s.profile)
+				log.Info("updating kubeconfig", "region", region, "cluster", cluster, "kubeconfig", cfg.Kubeconfig)
+				args := updateKubeconfigArgs(region, cluster, contextName, cfg.Kubeconfig, s.profile)
+				if cfg.Kubeconfig != "" {
+					if err := os.MkdirAll(filepath.Dir(cfg.Kubeconfig), 0o755); err != nil {
+						log.Warn("cannot create kubeconfig directory", "path", cfg.Kubeconfig, "err", err)
+						continue
+					}
 				}
 				cmd := exec.CommandContext(ctx, "aws", args...)
 				if b, err := cmd.CombinedOutput(); err != nil {
@@ -289,13 +288,15 @@ func saveTunnelConfig(path string, tunnels map[string]model.ClusterTunnel) error
 	return os.WriteFile(path, append(b, '\n'), 0o600)
 }
 
-func inferRegionFromContext(s string) string {
-	for _, p := range strings.Split(s, "/") {
-		if strings.Count(p, "-") >= 2 && len(p) >= 9 {
-			return p
-		}
+func updateKubeconfigArgs(region, cluster, contextName, kubeconfig, profile string) []string {
+	args := []string{"eks", "update-kubeconfig", "--region", region, "--name", cluster, "--alias", contextName}
+	if kubeconfig != "" {
+		args = append(args, "--kubeconfig", kubeconfig)
 	}
-	return "unknown"
+	if profile != "" {
+		args = append(args, "--profile", profile)
+	}
+	return args
 }
 
 func (s *Scanner) Findings(ctx context.Context, region string, includeMedium bool, runtime runidx.Index) ([]model.Row, error) {
