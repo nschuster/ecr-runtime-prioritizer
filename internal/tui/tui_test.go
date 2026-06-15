@@ -35,6 +35,21 @@ func TestTableViewContainsBubblesTableAndControls(t *testing.T) {
 	}
 }
 
+func TestTableHeaderHasNoBackgroundFill(t *testing.T) {
+	m := New(context.Background(), model.Config{Demo: true}, app.DemoRows())
+	view := m.View()
+	for _, line := range strings.Split(view, "\n") {
+		plain := stripANSI(line)
+		if strings.Contains(plain, "Severity") && strings.Contains(plain, "Repository") {
+			if strings.Contains(line, "48;2") || strings.Contains(line, "48;5") {
+				t.Fatalf("table header should not use a background color: %q", line)
+			}
+			return
+		}
+	}
+	t.Fatalf("table header not found\n%s", view)
+}
+
 func TestDetailAndReportModalViews(t *testing.T) {
 	m := New(context.Background(), model.Config{Demo: true}, app.DemoRows())
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})

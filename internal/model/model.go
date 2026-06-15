@@ -6,20 +6,31 @@ import (
 )
 
 type Config struct {
-	Profile           string
-	Regions           []string
-	IncludeMedium     bool
-	EKS               bool
-	ECS               bool
-	KubeContexts      []string
-	NoKubeconfig      bool
-	KubeTunnelCommand string
-	KubeTunnelWait    int
-	Format            string
-	OutPrefix         string
-	TUI               bool
-	Demo              bool
-	Limit             int
+	Profile              string
+	Regions              []string
+	IncludeMedium        bool
+	EKS                  bool
+	ECS                  bool
+	KubeContexts         []string
+	NoKubeconfig         bool
+	KubeTunnelCommand    string
+	KubeTunnelWait       int
+	KubeTunnelConfig     string
+	PromptForJumpHosts   bool
+	SaveKubeTunnelConfig bool
+	ClusterTunnels       map[string]ClusterTunnel
+	Format               string
+	OutPrefix            string
+	TUI                  bool
+	Demo                 bool
+	Limit                int
+}
+
+type ClusterTunnel struct {
+	JumpHostID string `json:"jump_host_id"`
+	RemoteHost string `json:"remote_host,omitempty"`
+	LocalPort  int    `json:"local_port,omitempty"`
+	Context    string `json:"context,omitempty"`
 }
 
 type RuntimeHit struct {

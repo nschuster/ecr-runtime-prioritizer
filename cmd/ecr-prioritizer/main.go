@@ -26,7 +26,7 @@ func main() {
 
 func newRootCommand() *cobra.Command {
 	var regions, contexts string
-	cfg := model.Config{Format: "table", Limit: 20, TUI: true}
+	cfg := model.Config{Format: "table", Limit: 20, TUI: true, PromptForJumpHosts: true}
 	cmd := &cobra.Command{
 		Use:   "ecr-prioritizer",
 		Short: "Prioritize Amazon Inspector ECR CVEs by exploitability, fixability, and runtime usage",
@@ -50,6 +50,11 @@ Use --demo for a safe local preview without AWS credentials.`,
 				cfg.Regions = awsdata.RegionsDefault()
 			}
 			cfg.KubeContexts = app.SplitCSV(contexts)
+			fileCfg, err := app.LoadFileConfig(cfg.KubeTunnelConfig)
+			if err != nil {
+				return err
+			}
+			cfg.ClusterTunnels = fileCfg.Clusters
 			if len(cfg.Regions) == 0 && !cfg.Demo {
 				return fmt.Errorf("at least one region is required")
 			}
@@ -75,8 +80,11 @@ Use --demo for a safe local preview without AWS credentials.`,
 	cmd.Flags().BoolVar(&cfg.ECS, "ecs", false, "check ECS running/pending task images")
 	cmd.Flags().StringVar(&contexts, "kube-contexts", "", "comma-separated kube contexts to inspect instead of discovering EKS clusters")
 	cmd.Flags().BoolVar(&cfg.NoKubeconfig, "no-update-kubeconfig", false, "do not call aws eks update-kubeconfig for discovered clusters")
-	cmd.Flags().StringVar(&cfg.KubeTunnelCommand, "kube-tunnel-command", "", "optional shell command that opens a Kubernetes API tunnel before EKS runtime collection; killed when the scan exits")
-	cmd.Flags().IntVar(&cfg.KubeTunnelWait, "kube-tunnel-wait", 3, "seconds to wait after starting --kube-tunnel-command before collecting pods")
+	cmd.Flags().StringVar(&cfg.KubeTunnelCommand, "kube-tunnel-command", "", "optional global shell command that opens a Kubernetes API tunnel before EKS runtime collection; killed when the scan exits")
+	cmd.Flags().IntVar(&cfg.KubeTunnelWait, "kube-tunnel-wait", 3, "seconds to wait after starting tunnel commands before collecting Kubernetes runtime inventory")
+	cmd.Flags().StringVar(&cfg.KubeTunnelConfig, "kube-tunnel-config", app.DefaultConfigPath(), "JSON config file with per-cluster jump_host_id/local_port tunnel settings")
+	cmd.Flags().BoolVar(&cfg.PromptForJumpHosts, "prompt-jump-hosts", true, "prompt for missing per-cluster SSM jump host instance IDs when stdin is interactive")
+	cmd.Flags().BoolVar(&cfg.SaveKubeTunnelConfig, "save-kube-tunnel-config", false, "save prompted jump host IDs back to --kube-tunnel-config")
 	cmd.Flags().StringVar(&cfg.Format, "format", "table", "output format: table, md, csv, json")
 	cmd.Flags().StringVar(&cfg.OutPrefix, "out-prefix", "", "write CSV, JSON, and Markdown reports to this prefix")
 	cmd.Flags().BoolVar(&cfg.TUI, "tui", true, "launch the interactive Bubble Tea TUI for table output; set --tui=false for plain table output")

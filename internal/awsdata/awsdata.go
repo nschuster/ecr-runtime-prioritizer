@@ -1,9 +1,14 @@
 package awsdata
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -51,21 +56,131 @@ func (s *Scanner) EKSClusters(ctx context.Context, region string) ([]string, err
 	return out, nil
 }
 
-func (s *Scanner) CollectEKS(ctx context.Context, regions []string, kubeContexts []string, update bool) []runidx.ImageRef {
+type EKSClusterInfo struct {
+	EndpointHost string
+}
+
+func (s *Scanner) EKSClusterInfo(ctx context.Context, region, name string) (EKSClusterInfo, error) {
+	c := eks.NewFromConfig(s.cfg, func(o *eks.Options) { o.Region = region })
+	out, err := c.DescribeCluster(ctx, &eks.DescribeClusterInput{Name: aws.String(name)})
+	if err != nil {
+		return EKSClusterInfo{}, err
+	}
+	endpoint := ""
+	if out.Cluster != nil {
+		endpoint = aws.ToString(out.Cluster.Endpoint)
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Host == "" {
+		return EKSClusterInfo{EndpointHost: strings.TrimPrefix(strings.TrimPrefix(endpoint, "https://"), "http://")}, nil
+	}
+	return EKSClusterInfo{EndpointHost: u.Host}, nil
+}
+
+func (s *Scanner) prepareClusterAccess(ctx context.Context, cfg model.Config, region, cluster, contextName, endpointHost string, ordinal int) (func(), runidx.KubeAccess) {
+	access := runidx.KubeAccess{Context: contextName, Region: region, Cluster: cluster}
+	if cfg.ClusterTunnels == nil {
+		cfg.ClusterTunnels = map[string]model.ClusterTunnel{}
+	}
+	key := region + "/" + cluster
+	tunnel, ok := lookupTunnel(cfg.ClusterTunnels, key, contextName, cluster)
+	if !ok && cfg.PromptForJumpHosts && stdinInteractive() {
+		if jump := promptJumpHost(region, cluster); jump != "" {
+			tunnel = model.ClusterTunnel{JumpHostID: jump}
+			cfg.ClusterTunnels[key] = tunnel
+			ok = true
+		}
+	}
+	if !ok || strings.TrimSpace(tunnel.JumpHostID) == "" {
+		return nil, access
+	}
+	if tunnel.RemoteHost == "" {
+		tunnel.RemoteHost = endpointHost
+	}
+	if tunnel.RemoteHost == "" {
+		log.Warn("no EKS endpoint host for tunnel; collecting with normal kube context", "cluster", cluster)
+		return nil, access
+	}
+	if tunnel.LocalPort <= 0 {
+		tunnel.LocalPort = 18443 + ordinal
+	}
+	cfg.ClusterTunnels[key] = tunnel
+	params := fmt.Sprintf(`{"host":["%s"],"portNumber":["443"],"localPortNumber":["%d"]}`, tunnel.RemoteHost, tunnel.LocalPort)
+	cmd := exec.CommandContext(ctx, "aws", "ssm", "start-session", "--target", tunnel.JumpHostID, "--document-name", "AWS-StartPortForwardingSessionToRemoteHost", "--parameters", params)
+	if s.profile != "" {
+		cmd.Env = append(os.Environ(), "AWS_PROFILE="+s.profile, "AWS_REGION="+region)
+	} else {
+		cmd.Env = append(os.Environ(), "AWS_REGION="+region)
+	}
+	log.Info("starting EKS SSM tunnel", "region", region, "cluster", cluster, "jump_host", tunnel.JumpHostID, "local_port", tunnel.LocalPort, "remote_host", tunnel.RemoteHost)
+	if err := cmd.Start(); err != nil {
+		log.Warn("cannot start EKS SSM tunnel; collecting with normal kube context", "cluster", cluster, "err", err)
+		return nil, access
+	}
+	wait := cfg.KubeTunnelWait
+	if wait <= 0 {
+		wait = 3
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		log.Warn("EKS SSM tunnel exited before collection; collecting with normal kube context", "cluster", cluster, "err", err)
+		return nil, access
+	case <-time.After(time.Duration(wait) * time.Second):
+	}
+	access.Server = fmt.Sprintf("https://127.0.0.1:%d", tunnel.LocalPort)
+	access.TLSServerName = tunnel.RemoteHost
+	return func() {
+		if cmd.Process != nil {
+			log.Info("stopping EKS SSM tunnel", "cluster", cluster)
+			_ = cmd.Process.Kill()
+		}
+	}, access
+}
+
+func (s *Scanner) CollectEKS(ctx context.Context, cfg model.Config) []runidx.ImageRef {
 	var refs []runidx.ImageRef
-	if len(kubeContexts) > 0 {
-		got, _ := runidx.CollectEKS(ctx, regions, kubeContexts, false)
+	if cfg.ClusterTunnels == nil {
+		cfg.ClusterTunnels = map[string]model.ClusterTunnel{}
+	}
+	if len(cfg.KubeContexts) > 0 {
+		access := make([]runidx.KubeAccess, 0, len(cfg.KubeContexts))
+		var stops []func()
+		defer func() {
+			for _, stop := range stops {
+				stop()
+			}
+		}()
+		for i, kc := range cfg.KubeContexts {
+			region := inferRegionFromContext(kc)
+			cluster := kc
+			if strings.Contains(kc, "/") {
+				cluster = kc[strings.LastIndex(kc, "/")+1:]
+			}
+			tunnel, _ := lookupTunnel(cfg.ClusterTunnels, kc, region+"/"+cluster, cluster)
+			stop, acc := s.prepareClusterAccess(ctx, cfg, region, cluster, kc, tunnel.RemoteHost, i)
+			if stop != nil {
+				stops = append(stops, stop)
+			}
+			access = append(access, acc)
+		}
+		got, _ := runidx.CollectEKSWithAccess(ctx, access)
 		return got
 	}
-	for _, region := range regions {
+	for _, region := range cfg.Regions {
 		clusters, err := s.EKSClusters(ctx, region)
 		if err != nil {
 			log.Warn("cannot list EKS clusters", "region", region, "err", err)
 			continue
 		}
-		for _, cluster := range clusters {
+		for i, cluster := range clusters {
 			contextName := region + "/" + cluster
-			if update {
+			info, err := s.EKSClusterInfo(ctx, region, cluster)
+			if err != nil {
+				log.Warn("cannot describe EKS cluster", "region", region, "cluster", cluster, "err", err)
+			}
+			if !cfg.NoKubeconfig {
 				log.Info("updating kubeconfig", "region", region, "cluster", cluster)
 				args := []string{"eks", "update-kubeconfig", "--region", region, "--name", cluster, "--alias", contextName}
 				if s.profile != "" {
@@ -77,8 +192,17 @@ func (s *Scanner) CollectEKS(ctx context.Context, regions []string, kubeContexts
 					continue
 				}
 			}
-			got, _ := runidx.CollectEKS(ctx, []string{region}, []string{contextName}, false)
+			stop, access := s.prepareClusterAccess(ctx, cfg, region, cluster, contextName, info.EndpointHost, i)
+			if stop != nil {
+				defer stop()
+			}
+			got, _ := runidx.CollectEKSWithAccess(ctx, []runidx.KubeAccess{access})
 			refs = append(refs, got...)
+		}
+	}
+	if cfg.SaveKubeTunnelConfig && len(cfg.ClusterTunnels) > 0 {
+		if err := saveTunnelConfig(cfg.KubeTunnelConfig, cfg.ClusterTunnels); err != nil {
+			log.Warn("cannot save kube tunnel config", "path", cfg.KubeTunnelConfig, "err", err)
 		}
 	}
 	return refs
@@ -126,6 +250,53 @@ func (s *Scanner) CollectECS(ctx context.Context, regions []string) []runidx.Ima
 }
 
 func awstaskstatus(s string) etypes.DesiredStatus { return etypes.DesiredStatus(s) }
+
+func lookupTunnel(tunnels map[string]model.ClusterTunnel, keys ...string) (model.ClusterTunnel, bool) {
+	for _, key := range keys {
+		if t, ok := tunnels[key]; ok {
+			return t, true
+		}
+	}
+	return model.ClusterTunnel{}, false
+}
+
+func stdinInteractive() bool {
+	st, err := os.Stdin.Stat()
+	return err == nil && (st.Mode()&os.ModeCharDevice) != 0
+}
+
+func promptJumpHost(region, cluster string) string {
+	fmt.Fprintf(os.Stderr, "SSM jump host instance ID for EKS cluster %s/%s (blank = no tunnel): ", region, cluster)
+	reader := bufio.NewReader(os.Stdin)
+	line, _ := reader.ReadString('\n')
+	return strings.TrimSpace(line)
+}
+
+func saveTunnelConfig(path string, tunnels map[string]model.ClusterTunnel) error {
+	if path == "" {
+		return nil
+	}
+	payload := struct {
+		Clusters map[string]model.ClusterTunnel `json:"clusters"`
+	}{Clusters: tunnels}
+	b, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(b, '\n'), 0o600)
+}
+
+func inferRegionFromContext(s string) string {
+	for _, p := range strings.Split(s, "/") {
+		if strings.Count(p, "-") >= 2 && len(p) >= 9 {
+			return p
+		}
+	}
+	return "unknown"
+}
 
 func (s *Scanner) Findings(ctx context.Context, region string, includeMedium bool, runtime runidx.Index) ([]model.Row, error) {
 	client := inspector2.NewFromConfig(s.cfg, func(o *inspector2.Options) { o.Region = region })

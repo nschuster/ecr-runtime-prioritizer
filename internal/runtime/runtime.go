@@ -17,6 +17,14 @@ type ImageRef struct {
 
 type Index map[string][]model.RuntimeHit
 
+type KubeAccess struct {
+	Context       string
+	Region        string
+	Cluster       string
+	Server        string
+	TLSServerName string
+}
+
 func BuildIndex(refs []ImageRef) Index {
 	idx := Index{}
 	for _, ref := range refs {
@@ -59,7 +67,7 @@ func Match(idx Index, keys []string) []model.RuntimeHit {
 	var hits []model.RuntimeHit
 	for _, key := range keys {
 		for _, hit := range idx[key] {
-			id := hit.Platform + hit.Region + hit.Cluster + hit.Namespace + hit.Workload + hit.Pod + hit.Container
+			id := hit.Platform + hit.Region + hit.Cluster + hit.Namespace + hit.Workload + hit.Pod + hit.Container + hit.Image + hit.Status
 			if _, ok := seen[id]; ok {
 				continue
 			}
@@ -71,21 +79,41 @@ func Match(idx Index, keys []string) []model.RuntimeHit {
 }
 
 func CollectEKS(ctx context.Context, regions, contexts []string, updateKubeconfig bool) ([]ImageRef, error) {
-	var refs []ImageRef
-	if len(contexts) == 0 {
-		log.Warn("no kube contexts supplied; EKS discovery requires AWS SDK path in scanner, skipping direct context collection")
-		return refs, nil
-	}
+	access := make([]KubeAccess, 0, len(contexts))
 	for _, kc := range contexts {
 		region := inferRegion(kc)
 		cluster := kc
 		if strings.Contains(kc, "/") {
 			cluster = kc[strings.LastIndex(kc, "/")+1:]
 		}
-		log.Info("collecting EKS pod images", "context", kc)
-		got, err := collectKubectl(ctx, kc, region, cluster)
+		access = append(access, KubeAccess{Context: kc, Region: region, Cluster: cluster})
+	}
+	return CollectEKSWithAccess(ctx, access)
+}
+
+func CollectEKSWithAccess(ctx context.Context, clusters []KubeAccess) ([]ImageRef, error) {
+	var refs []ImageRef
+	if len(clusters) == 0 {
+		log.Warn("no kube contexts supplied; EKS discovery requires AWS SDK path in scanner, skipping direct context collection")
+		return refs, nil
+	}
+	for _, access := range clusters {
+		if access.Context == "" {
+			continue
+		}
+		if access.Region == "" {
+			access.Region = inferRegion(access.Context)
+		}
+		if access.Cluster == "" {
+			access.Cluster = access.Context
+			if strings.Contains(access.Context, "/") {
+				access.Cluster = access.Context[strings.LastIndex(access.Context, "/")+1:]
+			}
+		}
+		log.Info("collecting EKS images", "context", access.Context, "cluster", access.Cluster)
+		got, err := collectKubectl(ctx, access)
 		if err != nil {
-			log.Warn("kubectl collection failed", "context", kc, "err", err)
+			log.Warn("kubectl collection failed", "context", access.Context, "err", err)
 			continue
 		}
 		refs = append(refs, got...)
@@ -93,9 +121,41 @@ func CollectEKS(ctx context.Context, regions, contexts []string, updateKubeconfi
 	return refs, nil
 }
 
-func collectKubectl(ctx context.Context, kubeContext, region, cluster string) ([]ImageRef, error) {
-	cmd := exec.CommandContext(ctx, "kubectl", "--context", kubeContext, "get", "pods", "--all-namespaces", "-o", "json")
-	b, err := cmd.CombinedOutput()
+func collectKubectl(ctx context.Context, access KubeAccess) ([]ImageRef, error) {
+	refs, err := collectPods(ctx, access)
+	if err != nil {
+		return nil, err
+	}
+	jobs, err := collectJobs(ctx, access)
+	if err != nil {
+		log.Warn("kubectl jobs collection failed", "context", access.Context, "err", err)
+	} else {
+		refs = append(refs, jobs...)
+	}
+	cronJobs, err := collectCronJobs(ctx, access)
+	if err != nil {
+		log.Warn("kubectl cronjobs collection failed", "context", access.Context, "err", err)
+	} else {
+		refs = append(refs, cronJobs...)
+	}
+	return refs, nil
+}
+
+func kubectlJSON(ctx context.Context, access KubeAccess, args ...string) ([]byte, error) {
+	base := []string{"--context", access.Context}
+	if access.Server != "" {
+		base = append(base, "--server", access.Server)
+	}
+	if access.TLSServerName != "" {
+		base = append(base, "--tls-server-name", access.TLSServerName)
+	}
+	base = append(base, args...)
+	cmd := exec.CommandContext(ctx, "kubectl", base...)
+	return cmd.CombinedOutput()
+}
+
+func collectPods(ctx context.Context, access KubeAccess) ([]ImageRef, error) {
+	b, err := kubectlJSON(ctx, access, "get", "pods", "--all-namespaces", "-o", "json")
 	if err != nil {
 		return nil, err
 	}
@@ -115,15 +175,65 @@ func collectKubectl(ctx context.Context, kubeContext, region, cluster string) ([
 			images[c.Name] = c.Image
 		}
 		for _, st := range append(p.Status.ContainerStatuses, p.Status.InitContainerStatuses...) {
-			refs = append(refs, ImageRef{Hit: model.RuntimeHit{Platform: "EKS", Region: region, Cluster: cluster, Namespace: p.Metadata.Namespace, Workload: workload(p), Pod: p.Metadata.Name, Container: st.Name, Image: first(st.Image, images[st.Name]), ImageID: st.ImageID, Status: "running"}})
+			refs = append(refs, ImageRef{Hit: model.RuntimeHit{Platform: "EKS", Region: access.Region, Cluster: access.Cluster, Namespace: p.Metadata.Namespace, Workload: workload(p), Pod: p.Metadata.Name, Container: st.Name, Image: first(st.Image, images[st.Name]), ImageID: st.ImageID, Status: "running"}})
 			delete(images, st.Name)
 		}
 		for name, img := range images {
-			refs = append(refs, ImageRef{Hit: model.RuntimeHit{Platform: "EKS", Region: region, Cluster: cluster, Namespace: p.Metadata.Namespace, Workload: workload(p), Pod: p.Metadata.Name, Container: name, Image: img, Status: "configured"}})
+			refs = append(refs, ImageRef{Hit: model.RuntimeHit{Platform: "EKS", Region: access.Region, Cluster: access.Cluster, Namespace: p.Metadata.Namespace, Workload: workload(p), Pod: p.Metadata.Name, Container: name, Image: img, Status: "configured"}})
 		}
 	}
 	return refs, nil
 }
+
+func collectJobs(ctx context.Context, access KubeAccess) ([]ImageRef, error) {
+	b, err := kubectlJSON(ctx, access, "get", "jobs", "--all-namespaces", "-o", "json")
+	if err != nil {
+		return nil, err
+	}
+	var list struct {
+		Items []job `json:"items"`
+	}
+	if err := json.Unmarshal(b, &list); err != nil {
+		return nil, err
+	}
+	var refs []ImageRef
+	for _, j := range list.Items {
+		status := "job"
+		if j.Status.Active > 0 {
+			status = "job-active"
+		} else if j.Status.Succeeded > 0 {
+			status = "job-succeeded"
+		} else if j.Status.Failed > 0 {
+			status = "job-failed"
+		}
+		for _, c := range append(j.Spec.Template.Spec.InitContainers, j.Spec.Template.Spec.Containers...) {
+			refs = append(refs, ImageRef{Hit: model.RuntimeHit{Platform: "EKS", Region: access.Region, Cluster: access.Cluster, Namespace: j.Metadata.Namespace, Workload: "Job/" + j.Metadata.Name, Container: c.Name, Image: c.Image, Status: status}})
+		}
+	}
+	return refs, nil
+}
+
+func collectCronJobs(ctx context.Context, access KubeAccess) ([]ImageRef, error) {
+	b, err := kubectlJSON(ctx, access, "get", "cronjobs", "--all-namespaces", "-o", "json")
+	if err != nil {
+		return nil, err
+	}
+	var list struct {
+		Items []cronJob `json:"items"`
+	}
+	if err := json.Unmarshal(b, &list); err != nil {
+		return nil, err
+	}
+	var refs []ImageRef
+	for _, cj := range list.Items {
+		for _, c := range append(cj.Spec.JobTemplate.Spec.Template.Spec.InitContainers, cj.Spec.JobTemplate.Spec.Template.Spec.Containers...) {
+			refs = append(refs, ImageRef{Hit: model.RuntimeHit{Platform: "EKS", Region: access.Region, Cluster: access.Cluster, Namespace: cj.Metadata.Namespace, Workload: "CronJob/" + cj.Metadata.Name, Container: c.Name, Image: c.Image, Status: "cronjob-template"}})
+		}
+	}
+	return refs, nil
+}
+
+type containerSpec struct{ Name, Image string }
 
 type pod struct {
 	Metadata struct {
@@ -132,11 +242,35 @@ type pod struct {
 		OwnerReferences []struct{ Kind, Name string } `json:"ownerReferences"`
 	} `json:"metadata"`
 	Spec struct {
-		Containers, InitContainers []struct{ Name, Image string } `json:"containers"`
+		Containers     []containerSpec `json:"containers"`
+		InitContainers []containerSpec `json:"initContainers"`
 	} `json:"spec"`
 	Status struct {
-		ContainerStatuses, InitContainerStatuses []struct{ Name, Image, ImageID string } `json:"containerStatuses"`
+		ContainerStatuses     []struct{ Name, Image, ImageID string } `json:"containerStatuses"`
+		InitContainerStatuses []struct{ Name, Image, ImageID string } `json:"initContainerStatuses"`
 	} `json:"status"`
+}
+
+type podTemplateSpec struct {
+	Spec struct {
+		Containers     []containerSpec `json:"containers"`
+		InitContainers []containerSpec `json:"initContainers"`
+	} `json:"spec"`
+}
+
+type job struct {
+	Metadata struct{ Name, Namespace string }        `json:"metadata"`
+	Spec     struct{ Template podTemplateSpec }      `json:"spec"`
+	Status   struct{ Active, Succeeded, Failed int } `json:"status"`
+}
+
+type cronJob struct {
+	Metadata struct{ Name, Namespace string } `json:"metadata"`
+	Spec     struct {
+		JobTemplate struct {
+			Spec struct{ Template podTemplateSpec } `json:"spec"`
+		} `json:"jobTemplate"`
+	} `json:"spec"`
 }
 
 func workload(p pod) string {

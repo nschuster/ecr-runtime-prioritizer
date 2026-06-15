@@ -83,7 +83,7 @@ func New(ctx context.Context, cfg model.Config, rows []model.Row) Model {
 		})
 	}
 	styles := table.DefaultStyles()
-	styles.Header = styles.Header.Bold(true).Foreground(lipgloss.Color("#E6EDF3")).Background(lipgloss.Color("#24324A"))
+	styles.Header = styles.Header.Bold(true).Foreground(lipgloss.Color("#E6EDF3"))
 	styles.Selected = styles.Selected.Bold(true).Foreground(lipgloss.Color("#06111F")).Background(accent)
 	t := table.New(table.WithColumns(cols), table.WithRows(trs), table.WithFocused(true), table.WithHeight(18), table.WithWidth(132), table.WithStyles(styles))
 
@@ -346,7 +346,7 @@ func renderCells(cols []table.Column, cells []string, header, selected bool) str
 		}
 		cell := padCell(value, col.Width)
 		if header {
-			cell = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#E6EDF3")).Background(lipgloss.Color("#24324A")).Render(cell)
+			cell = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#E6EDF3")).Render(cell)
 		} else if !selected {
 			cell = colorizeCell(value, cell)
 		}

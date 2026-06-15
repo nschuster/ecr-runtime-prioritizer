@@ -56,7 +56,7 @@ func CollectRows(ctx context.Context, cfg model.Config) ([]model.Row, error) {
 			if stopTunnel != nil {
 				defer stopTunnel()
 			}
-			refs = append(refs, s.CollectEKS(ctx, cfg.Regions, cfg.KubeContexts, !cfg.NoKubeconfig)...)
+			refs = append(refs, s.CollectEKS(ctx, cfg)...)
 		}
 		if cfg.ECS {
 			refs = append(refs, s.CollectECS(ctx, cfg.Regions)...)
