@@ -3,7 +3,9 @@ package app
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/log"
 	"github.com/nschuster/ecr-runtime-prioritizer/internal/awsdata"
@@ -47,6 +49,13 @@ func CollectRows(ctx context.Context, cfg model.Config) ([]model.Row, error) {
 		}
 		refs := []runidx.ImageRef{}
 		if cfg.EKS {
+			stopTunnel, err := startKubeTunnel(ctx, cfg)
+			if err != nil {
+				return nil, err
+			}
+			if stopTunnel != nil {
+				defer stopTunnel()
+			}
 			refs = append(refs, s.CollectEKS(ctx, cfg.Regions, cfg.KubeContexts, !cfg.NoKubeconfig)...)
 		}
 		if cfg.ECS {
@@ -70,6 +79,39 @@ func CollectRows(ctx context.Context, cfg model.Config) ([]model.Row, error) {
 	t1, t2, rt := model.Summary(rows)
 	log.Info("report complete", "rows", len(rows), "tier1", t1, "tier2", t2, "runtime_matched", rt)
 	return rows, nil
+}
+
+func startKubeTunnel(ctx context.Context, cfg model.Config) (func(), error) {
+	if strings.TrimSpace(cfg.KubeTunnelCommand) == "" {
+		return nil, nil
+	}
+	log.Info("starting Kubernetes tunnel command", "command", cfg.KubeTunnelCommand)
+	cmd := exec.CommandContext(ctx, "sh", "-c", cfg.KubeTunnelCommand)
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("start kube tunnel command: %w", err)
+	}
+	wait := cfg.KubeTunnelWait
+	if wait <= 0 {
+		wait = 3
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			return nil, fmt.Errorf("kube tunnel command exited early: %w", err)
+		}
+		log.Info("Kubernetes tunnel command completed before scan; continuing")
+		return nil, nil
+	case <-time.After(time.Duration(wait) * time.Second):
+		log.Info("Kubernetes tunnel command ready window elapsed", "wait_seconds", wait)
+	}
+	return func() {
+		if cmd.Process != nil {
+			log.Info("stopping Kubernetes tunnel command")
+			_ = cmd.Process.Kill()
+		}
+	}, nil
 }
 
 func WriteReports(prefix string, rows []model.Row, formats []string) error {

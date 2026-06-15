@@ -3,18 +3,20 @@ package model
 import "sort"
 
 type Config struct {
-	Profile       string
-	Regions       []string
-	IncludeMedium bool
-	EKS           bool
-	ECS           bool
-	KubeContexts  []string
-	NoKubeconfig  bool
-	Format        string
-	OutPrefix     string
-	TUI           bool
-	Demo          bool
-	Limit         int
+	Profile           string
+	Regions           []string
+	IncludeMedium     bool
+	EKS               bool
+	ECS               bool
+	KubeContexts      []string
+	NoKubeconfig      bool
+	KubeTunnelCommand string
+	KubeTunnelWait    int
+	Format            string
+	OutPrefix         string
+	TUI               bool
+	Demo              bool
+	Limit             int
 }
 
 type RuntimeHit struct {

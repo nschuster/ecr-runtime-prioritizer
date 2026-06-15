@@ -278,9 +278,11 @@ func (m Model) View() string {
 	case screenDetail:
 		return m.wrap(m.detailView())
 	case screenReport:
-		return m.wrap(m.tableView() + "\n" + m.reportModal())
+		base := m.wrap(m.tableView())
+		return overlayCenter(base, m.reportModal(), max(m.width, 100), max(m.height, 30))
 	case screenPicker:
-		return m.wrap(m.pickerModal())
+		base := m.wrap(m.tableView())
+		return overlayCenter(base, m.pickerModal(), max(m.width, 100), max(m.height, 30))
 	default:
 		return m.wrap(m.tableView())
 	}
@@ -297,7 +299,7 @@ func (m Model) tableView() string {
 	if m.status != "" {
 		help += "\n" + successStyle.Render(m.status)
 	}
-	return titleStyle.Render("ECR Inspector Runtime Prioritizer") + "\n" + status + "\n\n" + m.table.View() + "\n" + help
+	return titleStyle.Render("ECR Inspector Runtime Prioritizer") + "\n" + status + "\n\n" + colorizeTable(m.table.View()) + "\n" + help
 }
 
 func (m Model) detailView() string {
@@ -377,6 +379,49 @@ func (m Model) selectedDetail() string {
 	return b.String()
 }
 
+func colorizeTable(view string) string {
+	lines := strings.Split(view, "\n")
+	for i, line := range lines {
+		if i == 0 || strings.TrimSpace(line) == "" {
+			continue
+		}
+		line = strings.ReplaceAll(line, "Tier 1", lipgloss.NewStyle().Foreground(danger).Bold(true).Render("Tier 1"))
+		line = strings.ReplaceAll(line, "Tier 2", lipgloss.NewStyle().Foreground(warn).Bold(true).Render("Tier 2"))
+		line = strings.ReplaceAll(line, "CRITICAL", lipgloss.NewStyle().Foreground(danger).Bold(true).Render("CRITICAL"))
+		line = strings.ReplaceAll(line, "HIGH", lipgloss.NewStyle().Foreground(warn).Bold(true).Render("HIGH"))
+		line = strings.ReplaceAll(line, " YES ", " "+lipgloss.NewStyle().Foreground(ok).Bold(true).Render("YES")+" ")
+		lines[i] = line
+	}
+	return strings.Join(lines, "\n")
+}
+
+func overlayCenter(base, modal string, width, height int) string {
+	if width <= 0 {
+		width = max(lipgloss.Width(base), lipgloss.Width(modal))
+	}
+	if height <= 0 {
+		height = max(lipgloss.Height(base), lipgloss.Height(modal))
+	}
+	baseLines := strings.Split(base, "\n")
+	for len(baseLines) < height {
+		baseLines = append(baseLines, "")
+	}
+	modalLines := strings.Split(modal, "\n")
+	modalWidth := lipgloss.Width(modal)
+	modalHeight := lipgloss.Height(modal)
+	x := max(0, (width-modalWidth)/2)
+	y := max(0, (height-modalHeight)/2)
+	blank := strings.Repeat(" ", x)
+	for i, modalLine := range modalLines {
+		row := y + i
+		if row >= len(baseLines) {
+			break
+		}
+		baseLines[row] = blank + modalLine
+	}
+	return strings.Join(baseLines[:min(len(baseLines), height)], "\n")
+}
+
 func focusLine(active bool, label, value string) string {
 	prefix := "  "
 	if active {
@@ -405,6 +450,13 @@ func yesNo(b bool) string {
 }
 func max(a, b int) int {
 	if a > b {
+		return a
+	}
+	return b
+}
+
+func min(a, b int) int {
+	if a < b {
 		return a
 	}
 	return b

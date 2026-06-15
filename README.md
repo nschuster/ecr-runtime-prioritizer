@@ -37,7 +37,7 @@ TUI controls:
 | `Space` | Toggle report file types in the report modal |
 | `q` | Quit from the main table/details views |
 
-The report modal lets you set a filename prefix, select `csv`/`json`/`md`, and choose an output directory with the Bubbles file picker. Use `--tui=false` for the old plain terminal table, or choose `--format json|csv|md` for scriptable output.
+The report modal floats in the foreground in the middle of the TUI, lets you set a filename prefix, select `csv`/`json`/`md`, and choose an output directory with the Bubbles file picker. The overview table preserves the original severity/tier/runtime color cues. Use `--tui=false` for the old plain terminal table, or choose `--format json|csv|md` for scriptable output.
 
 ## Prioritization model
 
@@ -132,6 +132,28 @@ When `--profile` is omitted, both the AWS SDK calls and `aws eks update-kubeconf
   --eks \
   --kube-contexts prod-eks,staging-eks
 ```
+
+### Private Kubernetes API endpoints through a jump host
+
+Best practice is to keep Kubernetes connectivity in kubeconfig/networking and let the tool consume normal kube contexts. For private EKS API endpoints behind a bastion/jump host, use one of these patterns:
+
+1. **Preferred:** pre-create kube contexts whose API server is reachable through your existing tunnel/proxy, then run with `--kube-contexts ... --no-update-kubeconfig`.
+2. Use kubeconfig `proxy-url`/SOCKS support where it fits your environment.
+3. Use a short-lived tunnel command managed by the scanner with `--kube-tunnel-command`. The command is started before EKS pod collection and killed when the scan exits.
+
+Example with a local SSH tunnel command:
+
+```bash
+./bin/ecr-prioritizer \
+  --regions eu-central-1 \
+  --eks \
+  --kube-contexts prod-eks \
+  --no-update-kubeconfig \
+  --kube-tunnel-command 'ssh -N -L 127.0.0.1:8443:PRIVATE_EKS_ENDPOINT:443 bastion.example.com' \
+  --kube-tunnel-wait 5
+```
+
+For AWS-native environments, an SSM Session Manager port-forward or `sshuttle` command can be used the same way. The important point is that `kubectl --context <ctx> get pods --all-namespaces -o json` must work while the tunnel is up.
 
 ### Inspector + EKS + ECS
 

@@ -38,4 +38,15 @@ func TestDetailAndReportModalViews(t *testing.T) {
 			t.Fatalf("report modal missing %q\n%s", want, view)
 		}
 	}
+	lines := strings.Split(view, "\n")
+	modalLine := -1
+	for i, line := range lines {
+		if strings.Contains(line, "Generate report") {
+			modalLine = i
+			break
+		}
+	}
+	if modalLine <= 3 {
+		t.Fatalf("expected modal to be centered/overlaid, got line %d\n%s", modalLine, view)
+	}
 }
