@@ -20,7 +20,10 @@ import (
 	runidx "github.com/nschuster/ecr-runtime-prioritizer/internal/runtime"
 )
 
-type Scanner struct{ cfg aws.Config }
+type Scanner struct {
+	cfg     aws.Config
+	profile string
+}
 
 func New(ctx context.Context, profile string) (*Scanner, error) {
 	opts := []func(*awscfg.LoadOptions) error{}
@@ -31,7 +34,7 @@ func New(ctx context.Context, profile string) (*Scanner, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Scanner{cfg: cfg}, nil
+	return &Scanner{cfg: cfg, profile: profile}, nil
 }
 
 func (s *Scanner) EKSClusters(ctx context.Context, region string) ([]string, error) {
@@ -64,7 +67,11 @@ func (s *Scanner) CollectEKS(ctx context.Context, regions []string, kubeContexts
 			contextName := region + "/" + cluster
 			if update {
 				log.Info("updating kubeconfig", "region", region, "cluster", cluster)
-				cmd := exec.CommandContext(ctx, "aws", "eks", "update-kubeconfig", "--region", region, "--name", cluster, "--alias", contextName)
+				args := []string{"eks", "update-kubeconfig", "--region", region, "--name", cluster, "--alias", contextName}
+				if s.profile != "" {
+					args = append(args, "--profile", s.profile)
+				}
+				cmd := exec.CommandContext(ctx, "aws", args...)
 				if b, err := cmd.CombinedOutput(); err != nil {
 					log.Warn("update-kubeconfig failed", "cluster", cluster, "err", err, "output", string(b))
 					continue

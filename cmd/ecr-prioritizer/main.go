@@ -37,6 +37,7 @@ Tiering:
 
 Use --demo for a safe local preview without AWS credentials.`,
 		Example: `  ecr-prioritizer --demo
+  ecr-prioritizer --regions eu-central-1 --eks
   ecr-prioritizer --regions eu-central-1,eu-west-1 --eks --out-prefix prod-ecr-vulns
   ecr-prioritizer --profile prod --regions eu-central-1 --eks --ecs --format md`,
 		Version: version,
@@ -53,7 +54,7 @@ Use --demo for a safe local preview without AWS credentials.`,
 			return app.Run(cmd.Context(), cfg)
 		},
 	}
-	cmd.Flags().StringVar(&cfg.Profile, "profile", "", "AWS profile name")
+	cmd.Flags().StringVar(&cfg.Profile, "profile", "", "optional AWS profile name; when omitted, uses the normal local AWS credential chain")
 	cmd.Flags().StringVar(&regions, "regions", "", "comma-separated AWS regions (default: eu-central-1,eu-west-1,us-east-1)")
 	cmd.Flags().BoolVar(&cfg.IncludeMedium, "include-medium", false, "include MEDIUM findings in addition to HIGH/CRITICAL")
 	cmd.Flags().BoolVar(&cfg.EKS, "eks", false, "check EKS deployed/running pod images")

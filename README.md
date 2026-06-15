@@ -68,6 +68,15 @@ demo-report.md
 
 ### Inspector findings only
 
+If your AWS credentials are already available locally, you do **not** need to pass an AWS profile. The tool uses the normal AWS SDK credential chain: environment variables, `AWS_PROFILE`, SSO/session credentials, shared config files, EC2/ECS roles, etc.
+
+```bash
+./bin/ecr-prioritizer \
+  --regions eu-central-1,eu-west-1
+```
+
+Use `--profile` only when you want to force a named shared config profile:
+
 ```bash
 ./bin/ecr-prioritizer \
   --profile prod \
@@ -90,6 +99,8 @@ By default, EKS mode discovers clusters with the EKS API and runs:
 aws eks update-kubeconfig --region <region> --name <cluster> --alias <region>/<cluster>
 kubectl --context <region>/<cluster> get pods --all-namespaces -o json
 ```
+
+When `--profile` is omitted, both the AWS SDK calls and `aws eks update-kubeconfig` use your local default credential chain. When `--profile prod` is supplied, the generated `aws eks update-kubeconfig` call also receives `--profile prod`.
 
 ### Use existing kube contexts
 
