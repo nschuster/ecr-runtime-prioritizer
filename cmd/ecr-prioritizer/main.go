@@ -10,6 +10,7 @@ import (
 	"github.com/nschuster/ecr-runtime-prioritizer/internal/app"
 	"github.com/nschuster/ecr-runtime-prioritizer/internal/awsdata"
 	"github.com/nschuster/ecr-runtime-prioritizer/internal/model"
+	uitool "github.com/nschuster/ecr-runtime-prioritizer/internal/tui"
 	"github.com/spf13/cobra"
 )
 
@@ -25,7 +26,7 @@ func main() {
 
 func newRootCommand() *cobra.Command {
 	var regions, contexts string
-	cfg := model.Config{Format: "table", Limit: 20}
+	cfg := model.Config{Format: "table", Limit: 20, TUI: true}
 	cmd := &cobra.Command{
 		Use:   "ecr-prioritizer",
 		Short: "Prioritize Amazon Inspector ECR CVEs by exploitability, fixability, and runtime usage",
@@ -37,6 +38,7 @@ Tiering:
 
 Use --demo for a safe local preview without AWS credentials.`,
 		Example: `  ecr-prioritizer --demo
+  ecr-prioritizer --demo --tui=false
   ecr-prioritizer --regions eu-central-1 --eks
   ecr-prioritizer --regions eu-central-1,eu-west-1 --eks --out-prefix prod-ecr-vulns
   ecr-prioritizer --profile prod --regions eu-central-1 --eks --ecs --format md`,
@@ -51,6 +53,18 @@ Use --demo for a safe local preview without AWS credentials.`,
 			if len(cfg.Regions) == 0 && !cfg.Demo {
 				return fmt.Errorf("at least one region is required")
 			}
+			if cfg.TUI && cfg.Format == "table" {
+				rows, err := app.CollectRows(cmd.Context(), cfg)
+				if err != nil {
+					return err
+				}
+				if cfg.OutPrefix != "" {
+					if err := app.WriteReports(cfg.OutPrefix, rows, []string{"csv", "json", "md"}); err != nil {
+						return err
+					}
+				}
+				return uitool.Run(cmd.Context(), cfg, rows)
+			}
 			return app.Run(cmd.Context(), cfg)
 		},
 	}
@@ -63,6 +77,7 @@ Use --demo for a safe local preview without AWS credentials.`,
 	cmd.Flags().BoolVar(&cfg.NoKubeconfig, "no-update-kubeconfig", false, "do not call aws eks update-kubeconfig for discovered clusters")
 	cmd.Flags().StringVar(&cfg.Format, "format", "table", "output format: table, md, csv, json")
 	cmd.Flags().StringVar(&cfg.OutPrefix, "out-prefix", "", "write CSV, JSON, and Markdown reports to this prefix")
+	cmd.Flags().BoolVar(&cfg.TUI, "tui", true, "launch the interactive Bubble Tea TUI for table output; set --tui=false for plain table output")
 	cmd.Flags().BoolVar(&cfg.Demo, "demo", false, "use built-in demo data instead of AWS APIs")
 	cmd.Flags().IntVar(&cfg.Limit, "limit", 20, "maximum rows for terminal table/markdown output; 0 means all")
 	return cmd

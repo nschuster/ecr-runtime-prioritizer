@@ -12,6 +12,7 @@ type Config struct {
 	NoKubeconfig  bool
 	Format        string
 	OutPrefix     string
+	TUI           bool
 	Demo          bool
 	Limit         int
 }

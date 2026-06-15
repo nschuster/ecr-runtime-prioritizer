@@ -13,6 +13,29 @@ import (
 )
 
 func Run(ctx context.Context, cfg model.Config) error {
+	rows, err := CollectRows(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	if cfg.OutPrefix != "" {
+		if err := WriteReports(cfg.OutPrefix, rows, []string{"csv", "json", "md"}); err != nil {
+			return err
+		}
+	}
+	switch cfg.Format {
+	case "json":
+		fmt.Println(render.JSONString(rows))
+	case "csv":
+		fmt.Print(render.CSVString(rows))
+	case "md":
+		fmt.Print(render.GlowMarkdown(render.Markdown(rows, cfg.Limit)))
+	default:
+		fmt.Print(render.Table(rows, cfg.Limit))
+	}
+	return nil
+}
+
+func CollectRows(ctx context.Context, cfg model.Config) ([]model.Row, error) {
 	log.Info("starting report", "format", cfg.Format, "demo", cfg.Demo)
 	var rows []model.Row
 	if cfg.Demo {
@@ -20,7 +43,7 @@ func Run(ctx context.Context, cfg model.Config) error {
 	} else {
 		s, err := awsdata.New(ctx, cfg.Profile)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		refs := []runidx.ImageRef{}
 		if cfg.EKS {
@@ -41,29 +64,40 @@ func Run(ctx context.Context, cfg model.Config) error {
 		}
 	}
 	model.SortRows(rows)
+	for _, r := range rows {
+		log.Info("finding", "tier", r.Tier, "severity", r.Severity, "cve", r.CVE, "repository", r.Repository, "package", r.Package, "fixed", r.FixedVersion, "exploit", r.ExploitAvailable, "runtime", r.RunningOrDeployed)
+	}
 	t1, t2, rt := model.Summary(rows)
 	log.Info("report complete", "rows", len(rows), "tier1", t1, "tier2", t2, "runtime_matched", rt)
-	if cfg.OutPrefix != "" {
-		if err := render.WriteCSV(cfg.OutPrefix+".csv", rows); err != nil {
-			return err
-		}
-		if err := render.WriteJSON(cfg.OutPrefix+".json", rows); err != nil {
-			return err
-		}
-		if err := render.WriteMD(cfg.OutPrefix+".md", rows); err != nil {
-			return err
-		}
-		log.Info("wrote reports", "prefix", cfg.OutPrefix)
+	return rows, nil
+}
+
+func WriteReports(prefix string, rows []model.Row, formats []string) error {
+	if prefix == "" {
+		return fmt.Errorf("report prefix is required")
 	}
-	switch cfg.Format {
-	case "json":
-		fmt.Println(render.JSONString(rows))
-	case "csv":
-		fmt.Print(render.CSVString(rows))
-	case "md":
-		fmt.Print(render.GlowMarkdown(render.Markdown(rows, cfg.Limit)))
-	default:
-		fmt.Print(render.Table(rows, cfg.Limit))
+	for _, format := range formats {
+		switch strings.ToLower(strings.TrimSpace(format)) {
+		case "csv":
+			if err := render.WriteCSV(prefix+".csv", rows); err != nil {
+				return err
+			}
+			log.Info("wrote report", "path", prefix+".csv", "format", "csv")
+		case "json":
+			if err := render.WriteJSON(prefix+".json", rows); err != nil {
+				return err
+			}
+			log.Info("wrote report", "path", prefix+".json", "format", "json")
+		case "md", "markdown":
+			if err := render.WriteMD(prefix+".md", rows); err != nil {
+				return err
+			}
+			log.Info("wrote report", "path", prefix+".md", "format", "md")
+		case "":
+			continue
+		default:
+			return fmt.Errorf("unsupported report format %q", format)
+		}
 	}
 	return nil
 }

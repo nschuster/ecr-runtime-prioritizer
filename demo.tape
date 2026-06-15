@@ -3,21 +3,35 @@ Set Shell "bash"
 Set FontSize 18
 Set Width 1280
 Set Height 900
-Set TypingSpeed 45ms
-Set PlaybackSpeed 0.75
+Set TypingSpeed 40ms
+Set PlaybackSpeed 0.8
 
-Type "./bin/ecr-prioritizer --demo --limit 10"
+Type "./bin/ecr-prioritizer --demo"
 Enter
-Sleep 5s
+Sleep 4s
+Down
+Sleep 1s
+Enter
+Sleep 4s
+Escape
+Sleep 1s
+Type "r"
+Sleep 2s
+Type "p"
+Sleep 2s
+Type "c"
+Sleep 1s
+Tab
+Tab
+Tab
+Tab
+Enter
+Sleep 3s
+Escape
+Sleep 1s
+Type "q"
+Sleep 1s
 
 Type "./bin/ecr-prioritizer --demo --format md --limit 4"
 Enter
-Sleep 6s
-
-Type "./bin/ecr-prioritizer --demo --out-prefix demo-report --format table --limit 4"
-Enter
-Sleep 4s
-
-Type "ls -1 demo-report.*"
-Enter
-Sleep 3s
+Sleep 5s

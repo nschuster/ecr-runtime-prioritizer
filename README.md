@@ -1,6 +1,6 @@
 # ECR Runtime Prioritizer
 
-A Charm-styled Go CLI that turns Amazon Inspector ECR findings into a remediation queue ranked by exploitability, fixability, severity, and whether the vulnerable image is actually deployed.
+A Charm Bubble Tea TUI and automation-friendly Go CLI that turns Amazon Inspector ECR findings into a remediation queue ranked by exploitability, fixability, severity, and whether the vulnerable image is actually deployed.
 
 ![VHS demo](assets/ecr-prioritizer-demo.gif)
 
@@ -15,7 +15,29 @@ It combines:
 - **Amazon Inspector2 ECR findings** for CVE/package/fix metadata.
 - **EKS pod inventory** from `kubectl get pods --all-namespaces -o json`.
 - **ECS running/pending task inventory** from the ECS API.
-- **Charm output** using Lip Gloss, Fang, Glamour/Glow-style Markdown rendering, and Charm log messages.
+- **Charm TUI/output** using Bubble Tea, Bubbles table/viewport/text input/file picker components, Lip Gloss, Fang, Glamour/Glow-style Markdown rendering, and Charm log messages.
+
+## Interactive TUI
+
+By default, table output launches an interactive Bubble Tea TUI after the scanner logs every finding discovered. The startup logs make the scan auditable; the TUI then gives you a navigable remediation queue.
+
+```bash
+./bin/ecr-prioritizer --demo
+```
+
+TUI controls:
+
+| Key | Action |
+|---|---|
+| `↑`/`↓` or `k`/`j` | Move through findings |
+| `Enter`/`→` | Open the selected finding detail page |
+| `Esc`/`←` | Return from details/modal |
+| `r` | Open the report-generation modal |
+| `p` | Open the directory file picker from the report modal |
+| `Space` | Toggle report file types in the report modal |
+| `q` | Quit from the main table/details views |
+
+The report modal lets you set a filename prefix, select `csv`/`json`/`md`, and choose an output directory with the Bubbles file picker. Use `--tui=false` for the old plain terminal table, or choose `--format json|csv|md` for scriptable output.
 
 ## Prioritization model
 
@@ -42,7 +64,7 @@ cd ecr-runtime-prioritizer
 go build -o ./bin/ecr-prioritizer ./cmd/ecr-prioritizer
 ```
 
-> Fang currently pulls a newer Charm stack, so the module uses Go toolchain auto-download and requires Go 1.23+ metadata. Go 1.22 with toolchain auto-download also works in tested environments.
+> The module currently uses Go 1.24.2 metadata because the newer Charm Bubble Tea/Bubbles/Fang stack pulls recent terminal packages. Go toolchain auto-download handles this in tested environments.
 
 ## Quick demo without AWS
 
@@ -124,10 +146,10 @@ When `--profile` is omitted, both the AWS SDK calls and `aws eks update-kubeconf
 
 ## Output formats
 
-Terminal table:
+Plain terminal table without the interactive TUI:
 
 ```bash
-./bin/ecr-prioritizer --demo --format table
+./bin/ecr-prioritizer --demo --format table --tui=false
 ```
 
 Markdown rendered in the terminal with a Glow/Glamour-style renderer:
@@ -191,7 +213,7 @@ ecs:DescribeTasks
 go mod tidy
 gofmt -w .
 go build ./...
-go run ./cmd/ecr-prioritizer --demo --out-prefix demo-report
+go run ./cmd/ecr-prioritizer --demo --tui=false --out-prefix demo-report
 ```
 
 ## Regenerate the VHS demo
