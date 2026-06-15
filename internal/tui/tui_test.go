@@ -26,13 +26,34 @@ func stripANSI(s string) string { return ansiRE.ReplaceAllString(s, "") }
 func TestTableViewContainsBubblesTableAndControls(t *testing.T) {
 	m := New(context.Background(), model.Config{Demo: true}, app.DemoRows())
 	view := m.View()
-	for _, want := range []string{"ECR Inspector Runtime Prioritizer", "Tier 1", "CVE-2025-12345", "enter details", "r report"} {
+	for _, want := range []string{"ECR Inspector Runtime Prioritizer", "Tier 1", "CVE-2025-12345", "Exploit", "Fix", "enter details", "r report"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q\n%s", want, view)
 		}
 	}
+	if strings.Contains(view, "Fixed") {
+		t.Fatalf("overview should not show fixed version column; details view is enough\n%s", view)
+	}
 	if len(m.table.Columns()) == 0 || len(m.table.Rows()) == 0 {
 		t.Fatalf("expected Bubbles table to be populated")
+	}
+}
+
+func TestOverviewTableShowsExploitAndFixAvailability(t *testing.T) {
+	m := New(context.Background(), model.Config{Demo: true}, app.DemoRows())
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "Exploit") || !strings.Contains(view, "Fix") {
+		t.Fatalf("overview header should include exploit and fix availability columns\n%s", view)
+	}
+	if strings.Contains(view, "Fixed") || strings.Contains(view, "1.1.1w") {
+		t.Fatalf("overview should omit fixed version values; they stay in detail view\n%s", view)
+	}
+	selected := m.table.SelectedRow()
+	if len(selected) < 11 {
+		t.Fatalf("expected selected row to include exploit and fix cells, got %#v", selected)
+	}
+	if selected[9] != "YES" || selected[10] != "YES" {
+		t.Fatalf("expected first demo finding to show exploit/fix YES/YES, got %#v", selected)
 	}
 }
 
@@ -180,7 +201,7 @@ func TestSelectedRowHighlightSpansRenderedRow(t *testing.T) {
 			if !strings.Contains(line, "48;2") && !strings.Contains(line, "48;5") {
 				t.Fatalf("expected selected row to have a background style: %q", line)
 			}
-			if !strings.Contains(plain, "1.1.1w") || strings.Index(plain, "CVE-2025-12345") > strings.Index(plain, "1.1.1w") {
+			if !strings.Contains(plain, "YES") || strings.Index(plain, "CVE-2025-12345") > strings.LastIndex(plain, "YES") {
 				t.Fatalf("expected selected row highlight target to span through final columns, got %q", plain)
 			}
 			return
