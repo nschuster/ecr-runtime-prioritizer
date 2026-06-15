@@ -65,23 +65,22 @@ func Run(ctx context.Context, cfg model.Config, rows []model.Row) error {
 
 func New(_ context.Context, _ model.Config, rows []model.Row) Model {
 	cols := []table.Column{
-		{Title: "#", Width: 3},
-		{Title: "Tier", Width: 6},
-		{Title: "Run", Width: 3},
-		{Title: "Severity", Width: 8},
-		{Title: "CVSS", Width: 4},
-		{Title: "CVE", Width: 14},
-		{Title: "Repository", Width: 14},
-		{Title: "Image", Width: 12},
-		{Title: "Package", Width: 10},
-		{Title: "Exploit", Width: 7},
-		{Title: "Fix", Width: 3},
+		{Title: "#", Width: 4},
+		{Title: "Tier", Width: 8},
+		{Title: "Run", Width: 5},
+		{Title: "Severity", Width: 10},
+		{Title: "CVSS", Width: 6},
+		{Title: "CVE", Width: 16},
+		{Title: "Repository", Width: 22},
+		{Title: "Image", Width: 20},
+		{Title: "Package", Width: 18},
+		{Title: "Fixed", Width: 14},
 	}
 	trs := make([]table.Row, 0, len(rows))
 	for i, r := range rows {
 		trs = append(trs, table.Row{
 			strconv.Itoa(i + 1), r.Tier, yesNo(r.RunningOrDeployed), r.Severity,
-			fmt.Sprintf("%.1f", r.CVSS), r.CVE, r.Repository, strings.Join(r.ImageTags, ","), r.Package, r.ExploitAvailable, r.FixAvailable,
+			fmt.Sprintf("%.1f", r.CVSS), r.CVE, r.Repository, strings.Join(r.ImageTags, ","), r.Package, r.FixedVersion,
 		})
 	}
 	styles := table.DefaultStyles()
@@ -391,13 +390,13 @@ func (m Model) renderOverviewTable() string {
 	}
 	end := min(len(m.rows), start+height)
 	var b strings.Builder
-	b.WriteString(renderCells(cols, []string{"#", "Tier", "Run", "Severity", "CVSS", "CVE", "Repository", "Image", "Package", "Exploit", "Fix"}, true, false, 0))
+	b.WriteString(renderCells(cols, []string{"#", "Tier", "Run", "Severity", "CVSS", "CVE", "Repository", "Image", "Package", "Fixed"}, true, false, 0))
 	b.WriteString("\n")
 	for i := start; i < end; i++ {
 		r := m.rows[i]
 		cells := []string{
 			strconv.Itoa(i + 1), r.Tier, yesNo(r.RunningOrDeployed), r.Severity,
-			fmt.Sprintf("%.1f", r.CVSS), r.CVE, r.Repository, strings.Join(r.ImageTags, ","), r.Package, r.ExploitAvailable, r.FixAvailable,
+			fmt.Sprintf("%.1f", r.CVSS), r.CVE, r.Repository, strings.Join(r.ImageTags, ","), r.Package, r.FixedVersion,
 		}
 		b.WriteString(renderCells(cols, cells, false, i == cursor, m.frame))
 		if i < end-1 {
